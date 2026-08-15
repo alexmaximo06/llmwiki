@@ -23,6 +23,14 @@ class DownloadedPdf:
     filename: str
 
 
+@dataclass
+class ConverterExtraction:
+    """Per-page markdown from the converter plus the engine that produced it."""
+
+    pages: list[tuple[int, str]]
+    engine: str
+
+
 class CreateKB(BaseModel):
     name: str
     description: str | None = None

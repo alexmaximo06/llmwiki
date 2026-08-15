@@ -13,6 +13,7 @@ from services.bulk_persistence import insert_assets, insert_pages
 from services.chunker import chunk_pages, chunk_text, store_chunks
 from services.extracted_assets import ExtractedAsset, build_pdf_image_assets
 from services.s3 import S3Service
+from services.types import ConverterExtraction
 
 logger = logging.getLogger(__name__)
 
@@ -150,8 +151,10 @@ class OCRService:
             await self._store_ocr_result(document_id, user_id, kb_id, ocr_result)
         elif settings.CONVERTER_URL:
             presigned_url = await self._s3.generate_presigned_get(s3_source_key)
-            pages = await self._call_converter_extract(presigned_url, "pdf")
-            await self._store_extracted_pages(document_id, user_id, kb_id, pages, "opendataloader")
+            extraction = await self._call_converter_extract(presigned_url, "pdf")
+            await self._store_extracted_pages(
+                document_id, user_id, kb_id, extraction.pages, extraction.engine,
+            )
         else:
             if settings.MODE != "local":
                 raise RuntimeError(
@@ -171,8 +174,10 @@ class OCRService:
             await self._store_ocr_result(document_id, user_id, kb_id, ocr_result)
         elif settings.CONVERTER_URL:
             presigned_url = await self._s3.generate_presigned_get(s3_source_key)
-            pages = await self._call_converter_extract(presigned_url, ext)
-            await self._store_extracted_pages(document_id, user_id, kb_id, pages, "opendataloader")
+            extraction = await self._call_converter_extract(presigned_url, ext)
+            await self._store_extracted_pages(
+                document_id, user_id, kb_id, extraction.pages, f"libreoffice+{extraction.engine}",
+            )
         else:
             if settings.MODE != "local":
                 raise RuntimeError(
@@ -182,8 +187,8 @@ class OCRService:
 
     # ── Converter integration (hosted mode) ───────────────────────────────
 
-    async def _call_converter_extract(self, source_url: str, ext: str) -> list[tuple[int, str]]:
-        """Call the converter /extract endpoint. Returns list of (page_num, markdown).
+    async def _call_converter_extract(self, source_url: str, ext: str) -> ConverterExtraction:
+        """Call the converter /extract endpoint for per-page markdown and its engine name.
 
         Sends a request_id for source binding. If the converter echoes it back,
         we verify the match; if the converter doesn't support it, we log a warning
@@ -240,7 +245,10 @@ class OCRService:
         if not pages:
             raise ValueError("Converter returned empty pages — extraction may have failed silently")
 
-        return [(p["page"], p["content"]) for p in pages]
+        return ConverterExtraction(
+            pages=[(p["page"], p["content"]) for p in pages],
+            engine=data.get("engine") or "opendataloader",
+        )
 
     # ── OpenDataLoader local extraction ───────────────────────────────────
 

@@ -371,6 +371,218 @@ async def test_extraction_serialized_response_is_capped(monkeypatch, converter_m
     assert resp.status_code == 500
 
 
+def _cell(text: str) -> dict:
+    return {"type": "table cell", "kids": [{"type": "paragraph", "content": text}]}
+
+
+def _row(*texts: str) -> dict:
+    return {"type": "table row", "cells": [_cell(t) for t in texts]}
+
+
+async def test_table_is_rendered_as_markdown(monkeypatch, converter_module):
+    _install_mocks(monkeypatch, converter_module, page_payload={
+        "number of pages": 1,
+        "kids": [{
+            "type": "table",
+            "page number": 1,
+            "rows": [_row("Quarter", "Revenue"), _row("Q1", "1,200")],
+        }],
+    })
+
+    resp = await _post_extract(
+        converter_module,
+        {"source_url": "https://bucket.s3.amazonaws.com/alpha.pdf", "source_ext": "pdf"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["pages"][0]["content"] == (
+        "| Quarter | Revenue |\n| --- | --- |\n| Q1 | 1,200 |"
+    )
+
+
+async def test_text_block_content_is_not_dropped(monkeypatch, converter_module):
+    _install_mocks(monkeypatch, converter_module, page_payload={
+        "number of pages": 1,
+        "kids": [{
+            "type": "text block",
+            "page number": 1,
+            "kids": [
+                {"type": "heading", "heading level": 2, "content": "Part 1"},
+                {"type": "paragraph", "content": "Body text."},
+            ],
+        }],
+    })
+
+    resp = await _post_extract(
+        converter_module,
+        {"source_url": "https://bucket.s3.amazonaws.com/alpha.pdf", "source_ext": "pdf"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["pages"][0]["content"] == "## Part 1\n\nBody text."
+
+
+async def test_empty_table_is_skipped(monkeypatch, converter_module):
+    _install_mocks(monkeypatch, converter_module, page_payload={
+        "number of pages": 1,
+        "kids": [{"type": "table", "page number": 1, "rows": [_row("", "")]}],
+    })
+
+    resp = await _post_extract(
+        converter_module,
+        {"source_url": "https://bucket.s3.amazonaws.com/alpha.pdf", "source_ext": "pdf"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["pages"][0]["content"] == ""
+
+
+async def test_table_cell_count_is_capped(monkeypatch, converter_module):
+    _install_mocks(monkeypatch, converter_module, page_payload={
+        "number of pages": 1,
+        "kids": [{
+            "type": "table",
+            "page number": 1,
+            "rows": [_row("a", "b"), _row("c", "d")],
+        }],
+    })
+    monkeypatch.setattr(converter_module, "MAX_ELEMENT_CHILDREN", 3)
+
+    resp = await _post_extract(
+        converter_module,
+        {"source_url": "https://bucket.s3.amazonaws.com/alpha.pdf", "source_ext": "pdf"},
+    )
+
+    assert resp.status_code == 500
+
+
+async def test_text_block_nesting_is_depth_bounded(monkeypatch, converter_module):
+    deep: dict = {"type": "paragraph", "content": "bottom"}
+    for _ in range(40):
+        deep = {"type": "text block", "kids": [deep]}
+    deep["page number"] = 1
+
+    _install_mocks(monkeypatch, converter_module, page_payload={
+        "number of pages": 1,
+        "kids": [deep],
+    })
+
+    resp = await _post_extract(
+        converter_module,
+        {"source_url": "https://bucket.s3.amazonaws.com/alpha.pdf", "source_ext": "pdf"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["pages"][0]["content"] == ""
+
+
+async def test_table_text_shares_the_element_budget(monkeypatch, converter_module):
+    _install_mocks(monkeypatch, converter_module, page_payload={
+        "number of pages": 1,
+        "kids": [{
+            "type": "table",
+            "page number": 1,
+            "rows": [_row("abcd", "efgh")],
+        }],
+    })
+    monkeypatch.setattr(converter_module, "MAX_ELEMENT_TEXT_BYTES", 6)
+
+    resp = await _post_extract(
+        converter_module,
+        {"source_url": "https://bucket.s3.amazonaws.com/alpha.pdf", "source_ext": "pdf"},
+    )
+
+    assert resp.status_code == 500
+
+
+@pytest.fixture
+def pdf_inspector_module(monkeypatch):
+    Path("/tmp/conversions").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("CONVERTER_SECRET", _SECRET)
+    monkeypatch.setenv("PDF_ENGINE", "pdf-inspector")
+    module = importlib.import_module("converter.main")
+    return importlib.reload(module)
+
+
+def _install_pdf_inspector_mock(monkeypatch, module, payload: dict):
+    monkeypatch.setattr(module.httpx, "AsyncClient", _FakeAsyncClient)
+
+    def fake_run(command: list[str], timeout: int, what: str) -> None:
+        assert what == "pdf-inspector"
+        Path(command[-1], "result.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    monkeypatch.setattr(module, "_run_in_process_group", fake_run)
+
+
+async def test_pdf_inspector_engine_returns_pages_and_engine_name(monkeypatch, pdf_inspector_module):
+    _install_pdf_inspector_mock(monkeypatch, pdf_inspector_module, {
+        "pages": [
+            {"page": 1, "content": "# Title"},
+            {"page": 2, "content": "| a | b |\n| --- | --- |"},
+        ],
+    })
+
+    resp = await _post_extract(
+        pdf_inspector_module,
+        {"source_url": "https://bucket.s3.amazonaws.com/alpha.pdf", "source_ext": "pdf"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["engine"] == "pdf-inspector"
+    assert body["page_count"] == 2
+    assert body["pages"][0] == {"page": 1, "content": "# Title"}
+    assert body["pages"][1]["content"].startswith("| a | b |")
+
+
+async def test_pdf_inspector_rejects_non_positive_page_numbers(monkeypatch, pdf_inspector_module):
+    _install_pdf_inspector_mock(monkeypatch, pdf_inspector_module, {
+        "pages": [{"page": 0, "content": "zero-indexed leaked through"}],
+    })
+
+    resp = await _post_extract(
+        pdf_inspector_module,
+        {"source_url": "https://bucket.s3.amazonaws.com/alpha.pdf", "source_ext": "pdf"},
+    )
+
+    assert resp.status_code == 500
+
+
+async def test_pdf_inspector_total_text_is_capped(monkeypatch, pdf_inspector_module):
+    _install_pdf_inspector_mock(monkeypatch, pdf_inspector_module, {
+        "pages": [{"page": 1, "content": "abcdefgh"}],
+    })
+    monkeypatch.setattr(pdf_inspector_module, "MAX_EXTRACTED_TEXT_BYTES", 4)
+
+    resp = await _post_extract(
+        pdf_inspector_module,
+        {"source_url": "https://bucket.s3.amazonaws.com/alpha.pdf", "source_ext": "pdf"},
+    )
+
+    assert resp.status_code == 500
+
+
+async def test_unknown_pdf_engine_is_rejected_at_import(monkeypatch):
+    monkeypatch.setenv("CONVERTER_SECRET", _SECRET)
+    monkeypatch.setenv("PDF_ENGINE", "nonsense")
+    module = importlib.import_module("converter.main")
+
+    with pytest.raises(RuntimeError, match="PDF_ENGINE"):
+        importlib.reload(module)
+
+
+async def test_default_engine_is_opendataloader(monkeypatch, converter_module):
+    _install_mocks(monkeypatch, converter_module)
+
+    resp = await _post_extract(
+        converter_module,
+        {"source_url": "https://bucket.s3.amazonaws.com/alpha.pdf", "source_ext": "pdf"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["engine"] == "opendataloader"
+
+
 async def test_temp_directory_cleanup(monkeypatch, converter_module):
     _install_mocks(monkeypatch, converter_module)
 

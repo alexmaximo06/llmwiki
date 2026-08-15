@@ -27,6 +27,8 @@ app = FastAPI(title="Supavault Converter")
 OFFICE_EXTENSIONS = {"pptx", "ppt", "docx", "doc"}
 PDF_EXTENSIONS = {"pdf"}
 SUPPORTED_EXTENSIONS = OFFICE_EXTENSIONS | PDF_EXTENSIONS
+OPENDATALOADER_ENGINE = "opendataloader"
+PDF_INSPECTOR_ENGINE = "pdf-inspector"
 CONVERT_TIMEOUT = 120  # LibreOffice subprocess timeout (seconds)
 EXTRACT_TIMEOUT = 180  # opendataloader extraction timeout (seconds)
 MAX_SOURCE_BYTES = 200 * 1024 * 1024  # 200 MB — hard cap on downloaded file size
@@ -37,6 +39,9 @@ MAX_EXTRACTION_JSON_BYTES = 64 * 1024 * 1024
 MAX_EXTRACTION_ELEMENTS = 100_000
 MAX_ELEMENT_CHILDREN = 10_000
 MAX_ELEMENT_TEXT_BYTES = 1024 * 1024
+# Text blocks and table cells nest arbitrarily deep in untrusted extractor
+# output; bound the recursion so a crafted document cannot exhaust the stack.
+MAX_ELEMENT_DEPTH = 16
 MAX_EXTRACTED_TEXT_BYTES = 32 * 1024 * 1024
 MAX_EXTRACTION_RESPONSE_BYTES = 40 * 1024 * 1024
 # Defense-in-depth cap on the page-assembly loop. `number of pages` comes from
@@ -56,6 +61,22 @@ _EXTRACT_SCRIPT = (
     "import sys, opendataloader_pdf\n"
     "opendataloader_pdf.convert(input_path=sys.argv[1], output_dir=sys.argv[2], format='json', quiet=True)\n"
 )
+
+# pdf-inspector is pure Rust with no JVM, but a hung parse still needs the same
+# killable-process-group bound as opendataloader.
+_PDF_INSPECTOR_SCRIPT = (
+    "import sys, json, pdf_inspector\n"
+    "result = pdf_inspector.extract_pages_markdown(sys.argv[1])\n"
+    "pages = [{'page': p.page + 1, 'content': p.markdown or ''} for p in result.pages]\n"
+    "with open(sys.argv[2] + '/result.json', 'w', encoding='utf-8') as handle:\n"
+    "    json.dump({'pages': pages}, handle)\n"
+)
+
+PDF_ENGINE = os.environ.get("PDF_ENGINE", OPENDATALOADER_ENGINE).strip() or OPENDATALOADER_ENGINE
+if PDF_ENGINE not in (OPENDATALOADER_ENGINE, PDF_INSPECTOR_ENGINE):
+    raise RuntimeError(
+        f"PDF_ENGINE must be '{OPENDATALOADER_ENGINE}' or '{PDF_INSPECTOR_ENGINE}', got {PDF_ENGINE!r}"
+    )
 
 _active_extractions = 0
 
@@ -199,22 +220,124 @@ def _ensure_bounded_json(value, max_bytes: int, label: str) -> None:
         total += _bounded_utf8_size(piece, max_bytes - total, label)
 
 
+class _TextBudget:
+    """Bounds the total text pulled out of one untrusted element tree."""
+
+    def __init__(self, max_bytes: int):
+        self._remaining = max_bytes
+
+    def take(self, value, label: str, overhead: int = 0) -> str:
+        size = _bounded_utf8_size(value, self._remaining - overhead, label)
+        self._remaining -= size + overhead
+        return value
+
+
+def _inline_cell_text(cell: dict, budget: "_TextBudget", depth: int) -> str:
+    """Flatten a table cell's nested blocks into single-line text."""
+    if depth > MAX_ELEMENT_DEPTH:
+        return ""
+    if not isinstance(cell, dict):
+        raise RuntimeError("opendataloader table cells must be objects")
+
+    parts = []
+    content = cell.get("content")
+    if content is not None:
+        text = budget.take(content, "table cell text").strip()
+        if text:
+            parts.append(text)
+
+    kids = cell.get("kids", [])
+    if not isinstance(kids, list):
+        raise RuntimeError("opendataloader table cell kids must be a list")
+    if len(kids) > MAX_ELEMENT_CHILDREN:
+        raise RuntimeError("opendataloader element has too many children")
+
+    for kid in kids:
+        nested = _inline_cell_text(kid, budget, depth + 1)
+        if nested:
+            parts.append(nested)
+    return " ".join(parts)
+
+
+def _escape_cell(text: str) -> str:
+    """Make text safe to place inside a markdown table cell."""
+    return text.replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _table_to_markdown(el: dict, budget: "_TextBudget", depth: int) -> str:
+    """Render a table element as a markdown table, treating row one as the header."""
+    rows = el.get("rows", [])
+    if not isinstance(rows, list):
+        raise RuntimeError("opendataloader table rows must be a list")
+    if len(rows) > MAX_ELEMENT_CHILDREN:
+        raise RuntimeError("opendataloader element has too many children")
+
+    grid = []
+    cell_count = 0
+    for row in rows:
+        if not isinstance(row, dict):
+            raise RuntimeError("opendataloader table rows must be objects")
+        cells = row.get("cells", [])
+        if not isinstance(cells, list):
+            raise RuntimeError("opendataloader table cells must be a list")
+        cell_count += len(cells)
+        if cell_count > MAX_ELEMENT_CHILDREN:
+            raise RuntimeError("opendataloader element has too many children")
+        rendered = [
+            _escape_cell(_inline_cell_text(cell, budget, depth + 1))
+            for cell in cells
+        ]
+        if rendered:
+            grid.append(rendered)
+
+    if not any(any(cell for cell in row) for row in grid):
+        return ""
+
+    width = max(len(row) for row in grid)
+    padded = [row + [""] * (width - len(row)) for row in grid]
+    header, body = padded[0], padded[1:]
+
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join("---" for _ in header) + " |",
+    ]
+    lines.extend("| " + " | ".join(row) + " |" for row in body)
+    return "\n".join(lines)
+
+
+def _text_block_to_markdown(el: dict, budget: "_TextBudget", depth: int) -> str:
+    """Render a text block container by rendering each nested block."""
+    if depth > MAX_ELEMENT_DEPTH:
+        return ""
+    kids = el.get("kids", [])
+    if not isinstance(kids, list):
+        raise RuntimeError("opendataloader text block kids must be a list")
+    if len(kids) > MAX_ELEMENT_CHILDREN:
+        raise RuntimeError("opendataloader element has too many children")
+
+    parts = []
+    for kid in kids:
+        md = _render_element(kid, budget, depth + 1)
+        if md:
+            parts.append(md)
+    return "\n\n".join(parts)
+
+
 def _element_to_markdown(el: dict) -> str:
     """Convert a single JSON element to markdown."""
+    return _render_element(el, _TextBudget(MAX_ELEMENT_TEXT_BYTES), 0)
+
+
+def _render_element(el: dict, budget: "_TextBudget", depth: int) -> str:
+    """Convert one element to markdown against a shared text budget."""
     if not isinstance(el, dict):
         raise RuntimeError("opendataloader elements must be objects")
     t = el.get("type", "")
     if not isinstance(t, str):
         raise RuntimeError("opendataloader element type must be text")
 
-    used_bytes = 0
-
     def take_text(value, label: str, overhead: int = 0) -> str:
-        nonlocal used_bytes
-        remaining = MAX_ELEMENT_TEXT_BYTES - used_bytes - overhead
-        size = _bounded_utf8_size(value, remaining, label)
-        used_bytes += size + overhead
-        return value
+        return budget.take(value, label, overhead)
 
     if t == "heading":
         raw_level = el.get("heading level", 1)
@@ -261,6 +384,12 @@ def _element_to_markdown(el: dict) -> str:
                 lines.append(f"  - {child_content}")
         return "\n".join(lines)
 
+    if t == "table":
+        return _table_to_markdown(el, budget, depth)
+
+    if t == "text block":
+        return _text_block_to_markdown(el, budget, depth)
+
     if t == "image":
         src = take_text(el.get("source", ""), "image source", 10)
         return f"![image]({src})" if src else ""
@@ -272,27 +401,72 @@ def _element_to_markdown(el: dict) -> str:
     return ""
 
 
+def _read_bounded_json(output_dir: str, engine: str) -> dict:
+    """Load the extractor's JSON output without materializing an oversized file."""
+    json_path = next(Path(output_dir).glob("*.json"), None)
+    if json_path is None:
+        raise RuntimeError(f"{engine} produced no output")
+
+    if json_path.stat().st_size > MAX_EXTRACTION_JSON_BYTES:
+        raise RuntimeError(f"{engine} JSON exceeds safe size limit")
+    with json_path.open("rb") as f:
+        raw_json = f.read(MAX_EXTRACTION_JSON_BYTES + 1)
+    if len(raw_json) > MAX_EXTRACTION_JSON_BYTES:
+        raise RuntimeError(f"{engine} JSON exceeds safe size limit")
+    data = json.loads(raw_json)
+    if not isinstance(data, dict):
+        raise RuntimeError(f"{engine} JSON root must be an object")
+    return data
+
+
 def _extract_pages(pdf_path: str, output_dir: str) -> list[dict]:
+    """Extract per-page markdown using the configured engine."""
+    if PDF_ENGINE == PDF_INSPECTOR_ENGINE:
+        return _extract_pages_pdf_inspector(pdf_path, output_dir)
+    return _extract_pages_opendataloader(pdf_path, output_dir)
+
+
+def _extract_pages_pdf_inspector(pdf_path: str, output_dir: str) -> list[dict]:
+    """Run pdf-inspector and return its per-page markdown."""
+    _run_in_process_group(
+        [sys.executable, "-c", _PDF_INSPECTOR_SCRIPT, pdf_path, output_dir],
+        timeout=EXTRACT_TIMEOUT,
+        what=PDF_INSPECTOR_ENGINE,
+    )
+
+    data = _read_bounded_json(output_dir, PDF_INSPECTOR_ENGINE)
+    raw_pages = data.get("pages", [])
+    if not isinstance(raw_pages, list):
+        raise RuntimeError("pdf-inspector pages must be a list")
+    if len(raw_pages) > MAX_PAGES:
+        raise RuntimeError("pdf-inspector produced too many pages")
+
+    pages = []
+    total_text_bytes = 0
+    for entry in raw_pages:
+        if not isinstance(entry, dict):
+            raise RuntimeError("pdf-inspector pages must be objects")
+        page_num = entry.get("page")
+        if type(page_num) is not int or page_num < 1:
+            raise RuntimeError("pdf-inspector page numbers must be positive integers")
+        content = entry.get("content", "")
+        remaining = MAX_EXTRACTED_TEXT_BYTES - total_text_bytes
+        total_text_bytes += _bounded_utf8_size(content, remaining, "total extracted text")
+        pages.append({"page": page_num, "content": content})
+
+    _ensure_bounded_json(pages, MAX_EXTRACTION_RESPONSE_BYTES, "extraction response")
+    return pages
+
+
+def _extract_pages_opendataloader(pdf_path: str, output_dir: str) -> list[dict]:
     """Run opendataloader-pdf with JSON output and return per-page markdown."""
     _run_in_process_group(
         [sys.executable, "-c", _EXTRACT_SCRIPT, pdf_path, output_dir],
         timeout=EXTRACT_TIMEOUT,
-        what="opendataloader",
+        what=OPENDATALOADER_ENGINE,
     )
 
-    json_path = next(Path(output_dir).glob("*.json"), None)
-    if json_path is None:
-        raise RuntimeError("opendataloader-pdf produced no output")
-
-    if json_path.stat().st_size > MAX_EXTRACTION_JSON_BYTES:
-        raise RuntimeError("opendataloader JSON exceeds safe size limit")
-    with json_path.open("rb") as f:
-        raw_json = f.read(MAX_EXTRACTION_JSON_BYTES + 1)
-    if len(raw_json) > MAX_EXTRACTION_JSON_BYTES:
-        raise RuntimeError("opendataloader JSON exceeds safe size limit")
-    data = json.loads(raw_json)
-    if not isinstance(data, dict):
-        raise RuntimeError("opendataloader JSON root must be an object")
+    data = _read_bounded_json(output_dir, OPENDATALOADER_ENGINE)
 
     total_pages = data.get("number of pages", 0)
     if type(total_pages) is not int or total_pages < 0:
@@ -442,8 +616,11 @@ async def extract(
             raise HTTPException(500, "Extraction failed")
 
     page_count = len(pages)
-    logger.info("extract done: ext=%s pages=%d request_id=%s", ext, page_count, request_id)
-    response = {"pages": pages, "page_count": page_count}
+    logger.info(
+        "extract done: ext=%s engine=%s pages=%d request_id=%s",
+        ext, PDF_ENGINE, page_count, request_id,
+    )
+    response = {"pages": pages, "page_count": page_count, "engine": PDF_ENGINE}
     if req.request_id:
         response["request_id"] = req.request_id
     try:

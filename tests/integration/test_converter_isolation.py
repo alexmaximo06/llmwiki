@@ -277,9 +277,10 @@ async def test_converter_extract_retries_capacity_response(monkeypatch):
     monkeypatch.setattr(ocr.httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
     monkeypatch.setattr(ocr.asyncio, "sleep", fake_sleep)
 
-    pages = await service._call_converter_extract("https://s3.test/source.pdf", "pdf")
+    extraction = await service._call_converter_extract("https://s3.test/source.pdf", "pdf")
 
-    assert pages == [(1, "recovered")]
+    assert extraction.pages == [(1, "recovered")]
+    assert extraction.engine == "opendataloader"
     assert len(attempts) == 3
     assert len(set(attempts)) == 1
     assert sleeps == [0.0, 0.0]
@@ -368,7 +369,10 @@ async def test_ocr_service_has_no_shared_mutable_state_between_requests(monkeypa
 
     async def fake_call_converter_extract(source_url: str, ext: str):
         await asyncio.sleep(0.01)
-        return [(1, f"{ext}:{source_url}")]
+        return ocr.ConverterExtraction(
+            pages=[(1, f"{ext}:{source_url}")],
+            engine="opendataloader",
+        )
 
     async def fake_store_extracted_pages(document_id, user_id, kb_id, page_contents, parser, page_elements=None):
         stored.append((document_id, user_id, kb_id, page_contents, parser))

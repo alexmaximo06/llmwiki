@@ -31,7 +31,9 @@ class Settings(BaseSettings):
     CLOUDFLARE_AUTH_TOKEN: str = ""
     CLOUDFLARE_AI_GATEWAY_ID: str = ""
     QUIZ_GRADE_DAILY_LIMIT: int = Field(default=100, ge=1, le=10_000)
-    PDF_BACKEND: str = "opendataloader"  # "opendataloader" or "mistral"
+    # Only "mistral" is special-cased; every other value routes PDFs to the
+    # converter service, which selects its parser via its own PDF_ENGINE.
+    PDF_BACKEND: str = "opendataloader"
     STAGE: str = "dev"
     APP_URL: str = "http://localhost:3000"
     API_URL: str = "http://localhost:8000"

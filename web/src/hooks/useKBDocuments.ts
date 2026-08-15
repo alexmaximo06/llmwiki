@@ -82,16 +82,36 @@ export function useKBDocuments(knowledgeBaseId: string) {
     }
   }, [knowledgeBaseId, accessToken])
 
-  // Initial load — always use the API
+  // Reset the blocking load state only when the selected wiki changes. Token
+  // refreshes are common when a background tab becomes active again; treating
+  // those as an initial load blanks the current wiki while the same documents
+  // are fetched again.
   React.useEffect(() => {
     if (!knowledgeBaseId) {
       setDocuments([])
       setLoading(false)
       return
     }
+
+    setDocuments([])
     setLoading(true)
-    fetchDocs().finally(() => setLoading(false))
-  }, [knowledgeBaseId, fetchDocs])
+  }, [knowledgeBaseId])
+
+  // Fetch on first load and whenever credentials rotate. Credential-driven
+  // fetches deliberately leave `loading` unchanged so the existing wiki stays
+  // visible while it is revalidated in the background.
+  React.useEffect(() => {
+    if (!knowledgeBaseId || !accessToken) return
+
+    let cancelled = false
+    fetchDocs().finally(() => {
+      if (!cancelled) setLoading(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [knowledgeBaseId, accessToken, fetchDocs])
 
   // Real-time updates: WebSocket (hosted) or polling (local)
   React.useEffect(() => {
