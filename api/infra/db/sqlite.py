@@ -99,6 +99,26 @@ async def create_pool(db_path: str, init_schema: bool = True) -> aiosqlite.Conne
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'knowledge_base_events'",
         )
         had_events_table = await events_table.fetchone() is not None
+        # No migration runner: legacy document_chunks tables predate the
+        # highlight-search columns, and the schema's partial index references
+        # has_highlight — so these ALTERs must run before executescript.
+        chunks_table = await db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'document_chunks'",
+        )
+        if await chunks_table.fetchone() is not None:
+            cur = await db.execute("PRAGMA table_info(document_chunks)")
+            chunk_cols = {row[1] for row in await cur.fetchall()}
+            if "source_content" not in chunk_cols:
+                await db.execute(
+                    "ALTER TABLE document_chunks ADD COLUMN source_content TEXT NOT NULL DEFAULT ''",
+                )
+                await db.execute("UPDATE document_chunks SET source_content = content")
+            if "annotations_text" not in chunk_cols:
+                await db.execute("ALTER TABLE document_chunks ADD COLUMN annotations_text TEXT")
+            if "has_highlight" not in chunk_cols:
+                await db.execute(
+                    "ALTER TABLE document_chunks ADD COLUMN has_highlight INTEGER NOT NULL DEFAULT 0",
+                )
         schema = _SCHEMA_PATH.read_text(encoding='utf-8')
         await db.executescript(schema)
         # No migration runner: add workspace.kind to pre-existing DBs.
@@ -193,9 +213,8 @@ class SQLiteDocumentRepository:
         self, kb_id: str, user_id: str, filename: str, path: str,
     ) -> dict | None:
         cursor = await self._db.execute(
-            "SELECT * FROM documents WHERE knowledge_base_id = ? AND user_id = ? "
-            "AND filename = ? AND path = ? AND NOT archived",
-            (kb_id, user_id, filename, path),
+            "SELECT * FROM documents WHERE user_id = ? AND filename = ? AND path = ?",
+            (user_id, filename, path),
         )
         row = await cursor.fetchone()
         return _row_to_dict(cursor, row) if row else None
@@ -294,7 +313,8 @@ class SQLiteDocumentRepository:
 
     async def get_by_source_url(self, url: str) -> dict | None:
         cursor = await self._db.execute(
-            "SELECT id, knowledge_base_id, title, path, filename, version, highlights "
+            "SELECT id, (SELECT id FROM workspace LIMIT 1) as knowledge_base_id, "
+            "title, path, filename, version, highlights "
             "FROM documents "
             "WHERE status != 'failed' "
             "AND json_extract(metadata, '$.source_url') = ? "

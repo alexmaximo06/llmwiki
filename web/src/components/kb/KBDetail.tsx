@@ -10,6 +10,7 @@ import { useKBDocuments } from '@/hooks/useKBDocuments'
 import { apiFetch } from '@/lib/api'
 import { refreshAccessToken } from '@/lib/auth-token'
 import { toast } from 'sonner'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { KBSidenav } from '@/components/kb/KBSidenav'
 import { openMcpConnectionDock } from '@/components/connections/McpConnectionDock'
 import { SelectionActionBar } from '@/components/kb/SelectionActionBar'
@@ -390,12 +391,17 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [selectedIds.size, clearSelection])
 
+  const [confirmingBulkDelete, setConfirmingBulkDelete] = React.useState(false)
+  const [bulkDeleting, setBulkDeleting] = React.useState(false)
+
   const handleDeleteSelected = async () => {
     const t = getToken()
     if (!t) return
     const ids = Array.from(selectedIds)
-    if (!window.confirm(`Delete ${ids.length} selected document${ids.length > 1 ? 's' : ''}?`)) return
+    setBulkDeleting(true)
     const results = await Promise.allSettled(ids.map((id) => apiFetch(`/v1/documents/${id}`, t, { method: 'DELETE' })))
+    setBulkDeleting(false)
+    setConfirmingBulkDelete(false)
     const succeeded = ids.filter((_, i) => results[i].status === 'fulfilled')
     const failed = ids.filter((_, i) => results[i].status === 'rejected')
     if (succeeded.length > 0) setDocuments((prev) => prev.filter((d) => !succeeded.includes(d.id)))
@@ -973,8 +979,20 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
 
       <SelectionActionBar
         count={selectedIds.size}
-        onDelete={handleDeleteSelected}
+        onDelete={() => setConfirmingBulkDelete(true)}
         onClear={clearSelection}
+      />
+
+      <ConfirmDialog
+        open={confirmingBulkDelete}
+        onOpenChange={setConfirmingBulkDelete}
+        title={`Delete ${selectedIds.size} document${selectedIds.size > 1 ? 's' : ''}?`}
+        description="The selected documents will be removed from this wiki. This cannot be undone."
+        confirmLabel="Delete"
+        busyLabel="Deleting…"
+        busy={bulkDeleting}
+        onConfirm={handleDeleteSelected}
+        destructive
       />
     </div>
   )

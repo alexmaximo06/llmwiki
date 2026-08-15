@@ -15,6 +15,8 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { NameDialog } from '@/components/dialogs/NameDialog'
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuSeparator,
@@ -408,43 +410,31 @@ function WikiCard({
         </div>
       </motion.div>
 
-      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Rename wiki</DialogTitle>
-          </DialogHeader>
-          <Input
-            value={renameName}
-            onChange={(e) => setRenameName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleRename()}
-            autoFocus
-          />
-          <DialogFooter>
-            <Button onClick={handleRename} disabled={busy || !renameName.trim() || renameName.trim() === kb.name}>
-              {busy ? 'Renaming…' : 'Rename'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <NameDialog
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+        title="Rename wiki"
+        value={renameName}
+        onValueChange={setRenameName}
+        submitLabel="Rename"
+        busyLabel="Renaming…"
+        busy={busy}
+        submitDisabled={renameName.trim() === kb.name}
+        onSubmit={handleRename}
+      />
 
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete wiki</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            This will permanently delete <strong>{kb.name}</strong> and all its documents. This cannot be undone.
-          </p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={busy}>
-              {busy ? 'Deleting…' : 'Delete'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Delete wiki"
+        description={<>This permanently deletes <strong>{kb.name}</strong> and all its sources and wiki pages. This cannot be undone.</>}
+        confirmLabel="Delete"
+        busyLabel="Deleting…"
+        busy={busy}
+        onConfirm={handleDelete}
+        destructive
+        confirmText={kb.name}
+      />
     </>
   )
 }
