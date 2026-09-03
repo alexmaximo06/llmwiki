@@ -1,7 +1,7 @@
 """Parse citations and cross-references from wiki page content, store as edges."""
 
-import re
 import logging
+import re
 
 from vaultfs import VaultFS
 

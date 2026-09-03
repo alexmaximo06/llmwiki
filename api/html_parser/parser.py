@@ -5,7 +5,6 @@ import base64
 import hashlib
 import logging
 import re
-from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Comment
@@ -96,11 +95,11 @@ class Parser:
         self.soup = BeautifulSoup(content, "lxml")
         self.url = url
         self.content_only = content_only
-        self.images: List[Image] = []
+        self.images: list[Image] = []
         self.forms = FormExtractor()
-        self._segments: List[Tuple[str, Tag]] = []
+        self._segments: list[tuple[str, Tag]] = []
         self._suppress_tracking: bool = False
-        self._block_nodes: Dict[str, List[Tag]] = {}
+        self._block_nodes: dict[str, list[Tag]] = {}
         self._parsed: bool = False
         self._remove_noise()
 
@@ -171,10 +170,7 @@ class Parser:
                 return True
 
         role = (el.get("role") or "").lower()
-        if role in {"navigation", "banner", "complementary", "contentinfo"}:
-            return True
-
-        return False
+        return role in {"navigation", "banner", "complementary", "contentinfo"}
 
     @staticmethod
     def _is_noise_header(el: Tag) -> bool:
@@ -302,10 +298,7 @@ class Parser:
         cells = el.find_all(["td", "th"], recursive=True)
         if not cells:
             return False
-        for cell in cells:
-            if cell.find(self._LAYOUT_BLOCK_TAGS):
-                return True
-        return False
+        return any(cell.find(self._LAYOUT_BLOCK_TAGS) for cell in cells)
 
     def _process_table(self, el: Tag) -> str:
         raw_rows = []
@@ -326,7 +319,7 @@ class Parser:
 
         max_cols = max(sum(cs for _, _, cs in row) for row in raw_rows)
         num_rows = len(raw_rows)
-        grid: List[List[Optional[str]]] = [[None] * max_cols for _ in range(num_rows)]
+        grid: list[list[str | None]] = [[None] * max_cols for _ in range(num_rows)]
 
         for i, row in enumerate(raw_rows):
             col = 0
@@ -600,8 +593,8 @@ class Parser:
         digest = hashlib.sha1(content.encode()).hexdigest()[:8]
         return f"webmd-{prefix}{idx}-{digest}"
 
-    def _build_elements(self, content: str) -> List[Element]:
-        elements: List[Element] = []
+    def _build_elements(self, content: str) -> list[Element]:
+        elements: list[Element] = []
         current_offset = 0
 
         for idx, (seg_content, node) in enumerate(self._segments):
@@ -633,7 +626,7 @@ class Parser:
 
         return elements
 
-    def _stamp_dom(self, elements: List[Element]) -> None:
+    def _stamp_dom(self, elements: list[Element]) -> None:
         for elem in elements:
             nodes = self._block_nodes.get(elem.id, [])
             for node in nodes:
@@ -725,7 +718,7 @@ class Parser:
                     b64 = base64.b64encode(data).decode("ascii")
                     img_tag["src"] = f"data:{mime};base64,{b64}"
 
-                except Exception:
+                except Exception:  # noqa: BLE001
                     pass
 
         await asyncio.gather(*[_download(img) for img in imgs])
@@ -757,7 +750,7 @@ class Parser:
         if "data:" in value.lower():
             return None
 
-        entries: List[str] = []
+        entries: list[str] = []
         for raw_entry in value.split(","):
             entry = raw_entry.strip()
             if not entry:
@@ -890,7 +883,7 @@ class Parser:
             return ""
 
         if tag in {"ul", "ol"}:
-            items: List[str] = []
+            items: list[str] = []
             for li in node.find_all("li", recursive=False):
                 text = self._plaintext_children(li).strip()
                 if text:
@@ -905,9 +898,9 @@ class Parser:
         if tag == "table":
             if self._is_layout_table(node):
                 return self._plaintext_children(node)
-            rows: List[str] = []
+            rows: list[str] = []
             for tr in node.find_all("tr"):
-                cells: List[str] = []
+                cells: list[str] = []
                 for cell in tr.find_all(["td", "th"]):
                     txt = self._plaintext_children(cell).strip()
                     if txt:
@@ -965,14 +958,14 @@ class Parser:
         return text
 
     @staticmethod
-    def _normalize_with_index_map(plaintext: str) -> Tuple[str, List[int]]:
+    def _normalize_with_index_map(plaintext: str) -> tuple[str, list[int]]:
         """Build a whitespace-collapsed version of plaintext alongside a list
         mapping each character in the normalized string back to its original
         position in plaintext. Trailing position appended so callers can map
         an end-exclusive offset.
         """
-        out: List[str] = []
-        index_map: List[int] = []
+        out: list[str] = []
+        index_map: list[int] = []
         prev_was_ws = True  # treat start as preceded by whitespace (skip leading)
         i = 0
         n = len(plaintext)
@@ -1008,10 +1001,10 @@ class Parser:
         return normalized, index_map
 
     @staticmethod
-    def _all_occurrences(haystack: str, needle: str, cap: int) -> List[int]:
+    def _all_occurrences(haystack: str, needle: str, cap: int) -> list[int]:
         if not needle:
             return []
-        occurrences: List[int] = []
+        occurrences: list[int] = []
         start = 0
         while len(occurrences) < cap:
             idx = haystack.find(needle, start)
@@ -1024,7 +1017,7 @@ class Parser:
     @classmethod
     def _score_context(
         cls, normalized_plaintext: str, idx: int, length: int,
-        prefix: Optional[str], suffix: Optional[str],
+        prefix: str | None, suffix: str | None,
     ) -> int:
         score = 0
         if prefix:
@@ -1049,8 +1042,8 @@ class Parser:
 
     @classmethod
     def _locate_highlight(
-        cls, plaintext: str, anchor_payload: Dict,
-    ) -> Optional[TextAnchor]:
+        cls, plaintext: str, anchor_payload: dict,
+    ) -> TextAnchor | None:
         text_content = anchor_payload.get("textContent") or ""
         prefix = anchor_payload.get("prefix")
         suffix = anchor_payload.get("suffix")
@@ -1102,11 +1095,11 @@ class Parser:
 
     @classmethod
     def map_highlights(
-        cls, plaintext: str, highlights: List[Dict],
-    ) -> List[MappedHighlight]:
+        cls, plaintext: str, highlights: list[dict],
+    ) -> list[MappedHighlight]:
         """Map each highlight payload to a plaintext-relative anchor.
         Highlights that fail to locate are returned with `text_anchor=None`."""
-        results: List[MappedHighlight] = []
+        results: list[MappedHighlight] = []
         for h in highlights or []:
             if not isinstance(h, dict):
                 continue
@@ -1115,7 +1108,7 @@ class Parser:
             results.append(MappedHighlight(payload=h, text_anchor=text_anchor))
         return results
 
-    def parse(self, highlights: Optional[List[Dict]] = None) -> ParseResult:
+    def parse(self, highlights: list[dict] | None = None) -> ParseResult:
         if self._parsed:
             raise RuntimeError("Parser instances are single-use; create a new Parser to parse again.")
         self._parsed = True

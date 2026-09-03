@@ -8,7 +8,6 @@ asyncpg, SQLite via aiosqlite — chunks_fts is kept in sync by triggers
 in the local schema).
 """
 
-import json
 import logging
 import re
 from dataclasses import dataclass
@@ -65,7 +64,7 @@ def chunk_text(
         if m:
             level = len(m.group(1))
             heading = m.group(2).strip()
-            header_stack = [(l, t) for l, t in header_stack if l < level]
+            header_stack = [(lvl, t) for lvl, t in header_stack if lvl < level]
             header_stack.append((level, heading))
 
         if current_tokens + para_tokens > chunk_size and current_blocks:

@@ -42,8 +42,8 @@ async def _run_local_lifespan_inner(tmp_path: Path):
 
 
 async def test_local_mode_wires_local_auth_provider(tmp_path):
-    from infra.auth.local import LocalAuthProvider
     import deps
+    from infra.auth.local import LocalAuthProvider
 
     app, db = await _run_local_lifespan_inner(tmp_path)
     try:

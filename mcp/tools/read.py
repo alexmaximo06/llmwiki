@@ -4,13 +4,18 @@ import base64
 import json
 import logging
 
-from mcp.server.fastmcp import FastMCP, Context
-from mcp.types import TextContent, ImageContent
-
 from vaultfs import VaultFS
+
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ImageContent, TextContent
+
 from .helpers import (
-    clean_annotation_text, deep_link, glob_match, highlight_quote_and_page,
-    parse_page_range, resolve_path,
+    clean_annotation_text,
+    deep_link,
+    glob_match,
+    highlight_quote_and_page,
+    parse_page_range,
+    resolve_path,
 )
 from .references import get_backlinks_summary
 

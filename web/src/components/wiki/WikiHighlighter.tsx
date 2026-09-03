@@ -325,8 +325,10 @@ export function WikiHighlighter({ scrollRef, contentRef, documentId, contentKey,
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        clearPending()
-        setActive(null)
+        // Only touch the native selection when a highlight is actually pending
+        // — otherwise Escape would destroy unrelated user selections.
+        if (pending) clearPending()
+        if (active) setActive(null)
         return
       }
 
@@ -343,7 +345,7 @@ export function WikiHighlighter({ scrollRef, contentRef, documentId, contentKey,
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [clearPending, handlePendingHighlight, handlePendingNote, pending])
+  }, [active, clearPending, handlePendingHighlight, handlePendingNote, pending])
 
   const handleCommentSave = React.useCallback(() => {
     if (!active) return

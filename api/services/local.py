@@ -79,7 +79,7 @@ class LocalKBService(KBService):
         )
         rows = await cursor.fetchall()
         cols = [d[0] for d in cursor.description]
-        return [dict(zip(cols, r)) for r in rows]
+        return [dict(zip(cols, r, strict=False)) for r in rows]
 
     async def get(self, kb_id: str) -> dict | None:
         kbs = await self.list()

@@ -7,7 +7,7 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
-SCHEMA_PATH = Path(__file__).parents[2] / "shared" / "sqlite_schema.sql"
+SCHEMA_PATH = Path(__file__).parents[2] / "shared" / "sqlite_migrations" / "0001_baseline.sql"
 USER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
 

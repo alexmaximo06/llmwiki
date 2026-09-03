@@ -42,7 +42,7 @@ async def test_create_and_update_track_utf8_file_size(client, pool):
     assert await pool.fetchval(
         "SELECT file_size FROM documents WHERE id = $1",
         doc_id,
-    ) == len("hé".encode("utf-8"))
+    ) == len("hé".encode())
 
     updated = await client.put(
         f"/v1/documents/{doc_id}/content",
@@ -53,7 +53,7 @@ async def test_create_and_update_track_utf8_file_size(client, pool):
     assert await pool.fetchval(
         "SELECT file_size FROM documents WHERE id = $1",
         doc_id,
-    ) == len("éé".encode("utf-8"))
+    ) == len("éé".encode())
 
 
 async def test_create_rejects_storage_quota_without_inserting(client, pool):

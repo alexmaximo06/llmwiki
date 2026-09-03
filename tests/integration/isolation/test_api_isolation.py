@@ -8,16 +8,19 @@ write routes (service-role with explicit user_id checks) are covered.
 import time
 
 import jwt as pyjwt
-import pytest
 
 from tests.helpers import jwt as jwt_helper
 from tests.helpers.jwt import auth_headers
 from tests.integration.isolation.conftest import (
-    USER_A_ID, USER_A_EMAIL, USER_B_ID,
-    KB_A_ID, KB_B_ID,
-    DOC_A_ID, DOC_A2_ID, DOC_B_ID,
-    KEY_A_ID, KEY_B_ID,
-    REF_A_ID, REF_B_ID,
+    DOC_A2_ID,
+    DOC_A_ID,
+    DOC_B_ID,
+    KB_A_ID,
+    KB_B_ID,
+    KEY_B_ID,
+    USER_A_EMAIL,
+    USER_A_ID,
+    USER_B_ID,
 )
 
 

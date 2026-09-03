@@ -18,7 +18,9 @@ interface ConfirmDialogProps {
   onConfirm: () => void
   destructive?: boolean
   confirmText?: string
-  onCloseAutoFocus?: (event: Event) => void
+  /** Dialogs open from menus/popovers that unmount, so Radix's default focus
+   *  restore lands on <body> — every consumer must name a stable target. */
+  onCloseAutoFocus: (event: Event) => void
 }
 
 export function ConfirmDialog({
@@ -48,7 +50,7 @@ export function ConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent showCloseButton={false} onCloseAutoFocus={onCloseAutoFocus}>
+      <DialogContent showCloseButton={false} onCloseAutoFocus={onCloseAutoFocus} aria-busy={busy}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -60,6 +62,7 @@ export function ConfirmDialog({
             </label>
             <Input
               id="confirm-dialog-text"
+              disabled={busy}
               value={typed}
               onChange={(event) => setTyped(event.target.value)}
               onKeyDown={(event) => {

@@ -1,4 +1,4 @@
-"""Shared file-type classification for local mode (watcher, processor, upload)."""
+"""Shared file-type classification (watcher, processors, upload)."""
 
 PDF_TYPES = frozenset({"pdf"})
 OFFICE_TYPES = frozenset({"pptx", "ppt", "docx", "doc"})

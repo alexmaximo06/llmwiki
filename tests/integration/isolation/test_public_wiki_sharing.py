@@ -13,11 +13,14 @@ import pytest
 
 from tests.helpers.jwt import auth_headers
 from tests.integration.isolation.conftest import (
-    USER_A_ID, USER_B_ID,
-    KB_A_ID, KB_B_ID,
-    DOC_A_ID, DOC_A2_ID, DOC_B_ID,
+    DOC_A2_ID,
+    DOC_A_ID,
+    DOC_B_ID,
+    KB_A_ID,
+    KB_B_ID,
+    USER_A_ID,
+    USER_B_ID,
 )
-
 
 # ─────────── Helpers ───────────
 

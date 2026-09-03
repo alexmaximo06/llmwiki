@@ -4,8 +4,8 @@ Uses SqliteVaultFS with a temp workspace — no Postgres needed.
 """
 
 import json
-import sys
 import os
+import sys
 import uuid
 
 import pytest

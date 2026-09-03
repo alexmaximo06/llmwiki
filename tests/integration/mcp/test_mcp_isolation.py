@@ -12,11 +12,10 @@ import os
 import uuid
 
 import asyncpg
-import pytest
-
-from vaultfs.postgres import PostgresVaultFS
-from vaultfs.base import StorageQuotaExceededError
 import db as mcp_db
+import pytest
+from vaultfs.base import StorageQuotaExceededError
+from vaultfs.postgres import PostgresVaultFS
 
 USER_A_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 USER_B_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -311,7 +310,7 @@ class TestTextStorageAccounting:
         assert await pg_pool.fetchval(
             "SELECT file_size FROM documents WHERE id = $1",
             doc["id"],
-        ) == len("hé".encode("utf-8"))
+        ) == len("hé".encode())
 
     async def test_create_rejects_quota_without_inserting(self, fs_alice, pg_pool):
         await pg_pool.execute(

@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import aiosqlite
 from domain.watcher import _get_source_kind, _workspace_relative
 
-SCHEMA_PATH = Path(__file__).parents[2] / "shared" / "sqlite_schema.sql"
+SCHEMA_PATH = Path(__file__).parents[2] / "shared" / "sqlite_migrations" / "0001_baseline.sql"
 
 
 class TestWorkspaceRelative:

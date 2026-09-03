@@ -9,13 +9,11 @@ Exercises the highlight CRUD → chunk metadata update loop end-to-end:
 If anything in the (old ∪ new) recompute, the chunk writer wiring, or the
 mapping helpers regresses, one of these assertions fires.
 """
-import json
 import uuid
 from pathlib import Path
 
 import aiosqlite
 import pytest
-
 from infra.db.sqlite import SQLiteDocumentRepository
 
 
@@ -24,7 +22,7 @@ async def db_repo(tmp_path: Path):
     """A throwaway SQLite DB seeded with the shared schema."""
     db_path = tmp_path / "test.db"
     db = await aiosqlite.connect(str(db_path))
-    schema_path = Path(__file__).resolve().parents[2] / "shared" / "sqlite_schema.sql"
+    schema_path = Path(__file__).resolve().parents[2] / "shared" / "sqlite_migrations" / "0001_baseline.sql"
     await db.executescript(schema_path.read_text(encoding="utf-8"))
     await db.commit()
     yield db, SQLiteDocumentRepository(db)
@@ -37,7 +35,7 @@ async def _seed_doc(db: aiosqlite.Connection, doc_id: str) -> None:
         "INSERT INTO documents (id, user_id, filename, title, path, relative_path, "
         "source_kind, file_type, status, content, tags, version, document_number, "
         "metadata, highlights) "
-        f"VALUES (?, ?, ?, ?, ?, ?, 'source', 'md', 'ready', NULL, '[]', 0, 1, '{{}}', '[]')",
+        "VALUES (?, ?, ?, ?, ?, ?, 'source', 'md', 'ready', NULL, '[]', 0, 1, '{}', '[]')",
         (doc_id, "local", f"test-{doc_id[:8]}.md", "Test Doc", "/", f"test-{doc_id[:8]}.md"),
     )
 

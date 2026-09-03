@@ -11,8 +11,8 @@ See `docs/highlights-in-search-spec.md` for the full design.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 
 @dataclass

@@ -1,21 +1,35 @@
 """SQLite + local filesystem implementation of VaultFS."""
 
+import asyncio
+import contextlib
+import importlib.util
 import json
 import logging
 import os
 import uuid
 from datetime import date
 from pathlib import Path
+from types import ModuleType
 
 import aiosqlite
-from services.chunker import chunk_text, store_chunks_sqlite
+
+from vaultfs.chunker import chunk_text, store_chunks_sqlite
 
 from .base import DuplicateDocumentError, VaultFS
 from .highlights import append_reply, find_highlight, parse_highlights_value
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_PATH = Path(__file__).parent.parent.parent / "shared" / "sqlite_schema.sql"
+_MIGRATION_RUNNER_PATH = Path(__file__).parent.parent.parent / "api" / "infra" / "db" / "local_migrations.py"
+
+
+def _load_migration_runner() -> ModuleType:
+    """Load the api migration runner by file path — loaded lazily because the
+    hosted MCP image ships without the api/ tree."""
+    spec = importlib.util.spec_from_file_location("local_migrations", _MIGRATION_RUNNER_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 _db: aiosqlite.Connection | None = None
 _workspace_root: Path | None = None
@@ -40,17 +54,15 @@ def _rows_to_dicts(cursor: aiosqlite.Cursor, rows: list[tuple]) -> list[dict]:
     cols = [d[0] for d in cursor.description]
     results = []
     for row in rows:
-        d = dict(zip(cols, row))
+        d = dict(zip(cols, row, strict=False))
         if "tags" in d and isinstance(d["tags"], str):
             try:
                 d["tags"] = json.loads(d["tags"])
             except (json.JSONDecodeError, TypeError):
                 d["tags"] = []
         if "elements" in d and isinstance(d["elements"], str):
-            try:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
                 d["elements"] = json.loads(d["elements"])
-            except (json.JSONDecodeError, TypeError):
-                pass
         if "highlights" in d and isinstance(d["highlights"], str):
             try:
                 d["highlights"] = json.loads(d["highlights"])
@@ -79,54 +91,10 @@ class SqliteVaultFS(VaultFS):
         _workspace_root = Path(workspace_path).resolve()
         db_path = os.path.join(workspace_path, ".llmwiki", "index.db")
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        await asyncio.to_thread(_load_migration_runner().apply_migrations, db_path)
         _db = await aiosqlite.connect(db_path)
         await _db.execute("PRAGMA journal_mode=WAL")
         await _db.execute("PRAGMA foreign_keys=ON")
-        if _SCHEMA_PATH.exists():
-            events_table = await _db.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'knowledge_base_events'",
-            )
-            had_events_table = await events_table.fetchone() is not None
-            await _db.executescript(_SCHEMA_PATH.read_text(encoding='utf-8'))
-
-            # Existing local workspaces have exact creation facts worth
-            # preserving. updated_at is not reliable edit history, so no
-            # historical update events are synthesized.
-            await _db.execute(
-                "INSERT OR IGNORE INTO knowledge_base_events "
-                "(knowledge_base_id, user_id, event_type, subject_kind, subject_title, "
-                " event_key, occurred_at) "
-                "SELECT id, user_id, 'wiki.created', 'wiki', name, "
-                "       'kb:' || id || ':created', created_at FROM workspace",
-            )
-            await _db.execute(
-                "INSERT OR IGNORE INTO knowledge_base_events "
-                "(knowledge_base_id, user_id, event_type, subject_kind, document_id, "
-                " document_number, document_version, subject_title, subject_path, "
-                " event_key, metadata, occurred_at) "
-                "SELECT (SELECT id FROM workspace LIMIT 1), d.user_id, "
-                "       CASE WHEN d.source_kind = 'wiki' THEN 'page.created' ELSE 'source.added' END, "
-                "       CASE WHEN d.source_kind = 'wiki' THEN 'wiki_page' ELSE 'source' END, "
-                "       d.id, d.document_number, d.version, "
-                "       COALESCE(NULLIF(d.title, ''), d.filename), d.path || d.filename, "
-                "       'doc:' || d.id || ':created', "
-                "       json_object('file_type', d.file_type, 'file_size', d.file_size), d.created_at "
-                "FROM documents d "
-                "WHERE d.source_kind <> 'asset' "
-                "  AND COALESCE(json_extract(d.metadata, '$.hidden'), 0) = 0 "
-                "  AND COALESCE(json_extract(d.metadata, '$.asset'), 0) = 0 "
-                "  AND NOT (d.path = '/wiki/' AND d.filename IN ('index.json', 'log.md', 'overview.md')) "
-                "ORDER BY d.created_at, d.id",
-            )
-            if not had_events_table:
-                await _db.execute(
-                    "INSERT OR IGNORE INTO knowledge_base_events "
-                    "(knowledge_base_id, user_id, event_type, subject_kind, subject_title, "
-                    " event_key) "
-                    "SELECT id, user_id, 'tracking.started', 'wiki', name, "
-                    "       'kb:' || id || ':tracking-started' FROM workspace",
-                )
-            await _db.commit()
         logger.info("SQLite initialized: %s", db_path)
 
     @staticmethod
@@ -150,7 +118,7 @@ class SqliteVaultFS(VaultFS):
         if not row:
             return None
         cols = [d[0] for d in cursor.description]
-        ws = dict(zip(cols, row))
+        ws = dict(zip(cols, row, strict=False))
         return {"id": ws["id"], "name": ws["name"], "slug": ws["name"]}
 
     async def list_knowledge_bases(self) -> list[dict]:
@@ -290,9 +258,9 @@ class SqliteVaultFS(VaultFS):
             if file_type in ("md", "txt"):
                 await store_chunks_sqlite(db, doc_id, chunk_text(content or ""))
             await db.commit()
-        except aiosqlite.IntegrityError:
+        except aiosqlite.IntegrityError as e:
             await db.rollback()
-            raise DuplicateDocumentError(dir_path, filename)
+            raise DuplicateDocumentError(dir_path, filename) from e
         except Exception:
             await db.rollback()
             raise
@@ -603,7 +571,7 @@ class SqliteVaultFS(VaultFS):
                 (source_id, target_id, ref_type, page),
             )
             await db.commit()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Failed to insert reference %s -> %s: %s", source_id[:8], target_id[:8], e)
 
     async def replace_references(

@@ -1,13 +1,12 @@
 """Unit tests for highlight → chunk mapping + materialization helpers."""
 
-import pytest
 
 from services.highlight_chunks import (
     ChunkRecord,
+    all_affected_chunks,
     build_annotations_text,
     build_chunk_content,
     chunks_for_highlight,
-    all_affected_chunks,
     iter_chunks_with_annotations,
 )
 

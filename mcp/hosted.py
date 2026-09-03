@@ -3,23 +3,22 @@
 import importlib.util
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 import logfire
 import sentry_sdk
 import uvicorn
-from urllib.parse import urlparse
+from auth import SupabaseTokenVerifier
+from pydantic import AnyHttpUrl
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
+from tools import register
+from tools.ingest import register as register_ingest
+from vaultfs import PostgresVaultFS
 
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
-from pydantic import AnyHttpUrl
-from starlette.responses import PlainTextResponse
-from starlette.routing import Route
-
-from auth import SupabaseTokenVerifier
-from tools import register
-from tools.ingest import register as register_ingest
-from vaultfs import PostgresVaultFS
 
 
 def _load_local_settings():

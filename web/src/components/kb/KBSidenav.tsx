@@ -56,7 +56,7 @@ interface KBSidenavProps {
   loading: boolean
   onUpload: () => void
   filesViewActive: boolean
-  onFilesToggle: () => void
+  onOpenFiles: () => void
   graphViewActive: boolean
   onGraphToggle: () => void
   onOpenSourceDoc: (docId: string) => void
@@ -78,7 +78,7 @@ export function KBSidenav({
   loading,
   onUpload,
   filesViewActive,
-  onFilesToggle,
+  onOpenFiles,
   graphViewActive,
   onGraphToggle,
   onOpenSourceDoc,
@@ -89,6 +89,14 @@ export function KBSidenav({
   courseProgress,
 }: KBSidenavProps) {
   const [searchOpen, setSearchOpen] = React.useState(false)
+  const searchTriggerRef = React.useRef<HTMLButtonElement>(null)
+  const collapsedSearchRef = React.useRef<HTMLButtonElement>(null)
+
+  const restoreSearchFocus = React.useCallback((event: Event) => {
+    event.preventDefault()
+    const target = searchTriggerRef.current ?? collapsedSearchRef.current
+    target?.focus()
+  }, [])
   const [collapsed, setCollapsed] = React.useState(false)
 
   useIsomorphicLayoutEffect(() => {
@@ -170,6 +178,7 @@ export function KBSidenav({
             <PanelLeftOpen className="size-3.5" />
           </button>
           <button
+            ref={collapsedSearchRef}
             onClick={() => setSearchOpen(true)}
             title="Search"
             className="flex items-center justify-center size-8 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-sidebar-accent transition-colors cursor-pointer"
@@ -253,6 +262,7 @@ export function KBSidenav({
       {!collapsed && (
       <div className="shrink-0 px-2 pb-1 flex items-center gap-1.5">
         <button
+          ref={searchTriggerRef}
           onClick={() => setSearchOpen(true)}
           aria-label="Search pages and sources"
           className="flex items-center gap-2 flex-1 px-2.5 h-8 text-xs text-muted-foreground/50 hover:text-muted-foreground border border-border hover:bg-sidebar-accent rounded-md transition-colors cursor-pointer"
@@ -279,7 +289,7 @@ export function KBSidenav({
       )}
 
       {/* Search palette */}
-      <CommandDialog open={searchOpen} onOpenChange={setSearchOpen}>
+      <CommandDialog open={searchOpen} onOpenChange={setSearchOpen} onCloseAutoFocus={restoreSearchFocus}>
         <CommandInput placeholder="Jump to page, source, or action..." aria-label="Search pages and sources" />
         <CommandList>
           <CommandEmpty>No results found.</CommandEmpty>
@@ -351,7 +361,7 @@ export function KBSidenav({
                 Connect AI
               </CommandItem>
             )}
-            <CommandItem onSelect={() => { setSearchOpen(false); onFilesToggle() }}>
+            <CommandItem onSelect={() => { setSearchOpen(false); onOpenFiles() }}>
               <Folder className="size-3.5 mr-2 opacity-50" />
               Browse files
             </CommandItem>
@@ -442,7 +452,7 @@ export function KBSidenav({
       <div className="shrink-0 px-2 pb-1">
         <div className="flex items-center gap-1">
           <button
-            onClick={onFilesToggle}
+            onClick={onOpenFiles}
             className={cn(
               'flex items-center gap-2 flex-1 min-w-0 px-2.5 py-2 text-[13px] rounded-md transition-colors cursor-pointer',
               filesViewActive

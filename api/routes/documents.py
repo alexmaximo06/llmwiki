@@ -1,15 +1,20 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-
 from auth import get_current_user
 from deps import get_document_service
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from infra.rate_limit import limiter
 from services.base import DocumentService
 from services.types import (
-    BulkDelete, CreateFromUrl, CreateNote, CreateWebClip,
-    ReplaceHighlights, UpdateContent, UpdateMetadata, UpsertHighlight,
+    BulkDelete,
+    CreateFromUrl,
+    CreateNote,
+    CreateWebClip,
+    ReplaceHighlights,
+    UpdateContent,
+    UpdateMetadata,
+    UpsertHighlight,
 )
 from services.url_ingest import UrlIngestService
 

@@ -66,7 +66,6 @@ class TestCreateKB:
         old = os.environ.get("GLOBAL_MAX_USERS")
         os.environ["GLOBAL_MAX_USERS"] = "0"
         try:
-            from config import Settings
             # Config is cached at import, so this tests the DB check path
             # The actual check is: SELECT COUNT(DISTINCT id) FROM users >= GLOBAL_MAX_USERS
             # Since we have 1 user and cap is set via env, this may not take effect

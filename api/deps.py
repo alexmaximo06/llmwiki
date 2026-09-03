@@ -1,7 +1,8 @@
 import asyncio
 import inspect
 import json
-from typing import Annotated, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Annotated
 
 from fastapi import Depends, Request
 from scoped_db import ScopedDB

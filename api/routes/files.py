@@ -5,7 +5,6 @@ and from the workspace root (source files).
 """
 
 import mimetypes
-import os
 import platform
 import subprocess
 from pathlib import Path
@@ -121,6 +120,6 @@ async def open_file_externally(body: OpenFileRequest):
     try:
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except OSError as e:
-        raise HTTPException(status_code=500, detail=f"Failed to open file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to open file: {e}") from e
 
     return {"status": "opened", "path": body.path}

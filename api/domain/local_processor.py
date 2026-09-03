@@ -5,6 +5,7 @@ Respects PDF_BACKEND config and optional Mistral/LibreOffice backends.
 """
 
 import asyncio
+import contextlib
 import contextvars
 import functools
 import json
@@ -15,7 +16,7 @@ import signal
 import subprocess
 import tempfile
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite
@@ -65,16 +66,14 @@ async def _to_thread_joined(func, /, *args, **kwargs):
                 await asyncio.shield(worker)
             except asyncio.CancelledError:
                 continue
-            except BaseException:
+            except BaseException:  # noqa: BLE001
                 break
 
         # Retrieve a post-cancellation worker exception so it is not reported
         # as unobserved. The request/task cancellation remains authoritative.
         if worker.done():
-            try:
+            with contextlib.suppress(BaseException):
                 worker.result()
-            except BaseException:
-                pass
         raise
 
 
@@ -109,10 +108,8 @@ def _run_process_group(command: list[str], timeout: int) -> subprocess.Completed
     except subprocess.TimeoutExpired as error:
         if proc.poll() is None:
             if os.name == "posix":
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
             else:  # pragma: no cover - Windows
                 subprocess.run(
                     ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
@@ -164,7 +161,7 @@ def _extract_html_content(file_path: Path) -> str:
 
         parser = Parser(raw_html, content_only=True)
         return parser.parse().content
-    except Exception:
+    except Exception:  # noqa: BLE001
         return raw_html
 
 
@@ -199,7 +196,7 @@ async def process_document(db: aiosqlite.Connection, doc_id: str, workspace: Pat
             return
 
         cols = [d[0] for d in cursor.description]
-        doc = dict(zip(cols, row))
+        doc = dict(zip(cols, row, strict=False))
         filename = doc["filename"]
 
         file_type = doc["file_type"] or ""
@@ -241,7 +238,7 @@ async def process_document(db: aiosqlite.Connection, doc_id: str, workspace: Pat
         except Exception:
             logger.exception("Failed to restore cancelled document %s", doc_id[:8])
         raise
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         error_msg = str(e)[:500]
         try:
             await db.execute(
@@ -317,7 +314,7 @@ def reconcile_workspace(db: aiosqlite.Connection, workspace: Path):
     # This function intentionally captures the cutoff before returning its
     # coroutine. Main creates the reconcile task before the watcher task, so
     # extractions claimed after startup cannot be mistaken for stale work.
-    recovery_cutoff = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    recovery_cutoff = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
     return _reconcile_workspace(db, workspace, recovery_cutoff)
 
 

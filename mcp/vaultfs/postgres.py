@@ -16,7 +16,8 @@ from db import (
     service_execute,
     service_queryrow,
 )
-from services.chunker import chunk_text, store_chunks_pg
+
+from vaultfs.chunker import chunk_text, store_chunks_pg
 
 from .base import DuplicateDocumentError, StorageQuotaExceededError, VaultFS
 from .highlights import append_reply, find_highlight, parse_highlights_value
@@ -173,34 +174,33 @@ class PostgresVaultFS(VaultFS):
         import json as _json
         content_size = len(content.encode("utf-8"))
         pool = await get_pool()
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext($1::text))",
-                    self.user_id,
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1::text))",
+                self.user_id,
+            )
+            await self._check_storage_available(conn, content_size)
+            try:
+                row = await conn.fetchrow(
+                    "INSERT INTO documents (knowledge_base_id, user_id, filename, title, path, "
+                    "file_type, status, content, file_size, tags, date, metadata, version) "
+                    "SELECT $1, $2, $3, $4, $5, $6, 'ready', $7, $8, $9, $10, $11::jsonb, 1 "
+                    "WHERE EXISTS (SELECT 1 FROM knowledge_bases WHERE id = $1 AND user_id = $2) "
+                    "RETURNING id, filename, path",
+                    kb_id, self.user_id, filename, title, dir_path, file_type, content,
+                    content_size, tags, date, _json.dumps(metadata) if metadata else None,
                 )
-                await self._check_storage_available(conn, content_size)
-                try:
-                    row = await conn.fetchrow(
-                        "INSERT INTO documents (knowledge_base_id, user_id, filename, title, path, "
-                        "file_type, status, content, file_size, tags, date, metadata, version) "
-                        "SELECT $1, $2, $3, $4, $5, $6, 'ready', $7, $8, $9, $10, $11::jsonb, 1 "
-                        "WHERE EXISTS (SELECT 1 FROM knowledge_bases WHERE id = $1 AND user_id = $2) "
-                        "RETURNING id, filename, path",
-                        kb_id, self.user_id, filename, title, dir_path, file_type, content,
-                        content_size, tags, date, _json.dumps(metadata) if metadata else None,
-                    )
-                except asyncpg.UniqueViolationError as e:
-                    # Only re-raise as DuplicateDocumentError for the path/filename index.
-                    # Any other unique violation is a different bug worth surfacing.
-                    if e.constraint_name == "idx_documents_unique_active":
-                        raise DuplicateDocumentError(dir_path, filename)
-                    raise
-                if row is None:
-                    raise PermissionError(f"knowledge base {kb_id} not owned by user")
-                if file_type in ("md", "txt"):
-                    chunks = chunk_text(content or "")
-                    await store_chunks_pg(conn, str(row["id"]), self.user_id, kb_id, chunks)
+            except asyncpg.UniqueViolationError as e:
+                # Only re-raise as DuplicateDocumentError for the path/filename index.
+                # Any other unique violation is a different bug worth surfacing.
+                if e.constraint_name == "idx_documents_unique_active":
+                    raise DuplicateDocumentError(dir_path, filename) from e
+                raise
+            if row is None:
+                raise PermissionError(f"knowledge base {kb_id} not owned by user")
+            if file_type in ("md", "txt"):
+                chunks = chunk_text(content or "")
+                await store_chunks_pg(conn, str(row["id"]), self.user_id, kb_id, chunks)
         return dict(row)
 
     async def update_document(self, doc_id: str, content: str, tags: list[str] | None = None, title: str | None = None, date: str | None = None, metadata: dict | None = None) -> dict | None:
@@ -239,56 +239,54 @@ class PostgresVaultFS(VaultFS):
         )
 
         pool = await get_pool()
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                await conn.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext($1::text))",
-                    self.user_id,
+        async with pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1::text))",
+                self.user_id,
+            )
+            current = await conn.fetchrow(
+                "SELECT file_size FROM documents "
+                "WHERE id = $1 AND user_id = $2 FOR UPDATE",
+                doc_id, self.user_id,
+            )
+            if not current:
+                return None
+            await self._check_storage_available(
+                conn,
+                content_size - (current["file_size"] or 0),
+            )
+            row = await conn.fetchrow(sql, *args)
+            if row and row["file_type"] in ("md", "txt"):
+                chunks = chunk_text(content or "")
+                await store_chunks_pg(
+                    conn, str(row["id"]), self.user_id,
+                    str(row["knowledge_base_id"]), chunks,
                 )
-                current = await conn.fetchrow(
-                    "SELECT file_size FROM documents "
-                    "WHERE id = $1 AND user_id = $2 FOR UPDATE",
-                    doc_id, self.user_id,
-                )
-                if not current:
-                    return None
-                await self._check_storage_available(
-                    conn,
-                    content_size - (current["file_size"] or 0),
-                )
-                row = await conn.fetchrow(sql, *args)
-                if row and row["file_type"] in ("md", "txt"):
-                    chunks = chunk_text(content or "")
-                    await store_chunks_pg(
-                        conn, str(row["id"]), self.user_id,
-                        str(row["knowledge_base_id"]), chunks,
-                    )
         return {"id": row["id"], "filename": row["filename"], "path": row["path"]} if row else None
 
     async def add_highlight_reply(self, doc_id: str, highlight_id: str, reply: dict) -> dict | None:
         import json as _json
         pool = await get_pool()
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                row = await conn.fetchrow(
-                    "SELECT highlights FROM documents "
-                    "WHERE id = $1 AND user_id = $2 FOR UPDATE",
-                    doc_id, self.user_id,
-                )
-                if not row:
-                    return None
-                highlights = parse_highlights_value(row["highlights"])
-                target = find_highlight(highlights, highlight_id)
-                if target is None:
-                    return None
-                append_reply(target, reply)
-                await conn.execute(
-                    "UPDATE documents SET highlights = $1::jsonb, "
-                    "version = COALESCE(version, 0) + 1, updated_at = now() "
-                    "WHERE id = $2 AND user_id = $3",
-                    _json.dumps(highlights), doc_id, self.user_id,
-                )
-                return target
+        async with pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT highlights FROM documents "
+                "WHERE id = $1 AND user_id = $2 FOR UPDATE",
+                doc_id, self.user_id,
+            )
+            if not row:
+                return None
+            highlights = parse_highlights_value(row["highlights"])
+            target = find_highlight(highlights, highlight_id)
+            if target is None:
+                return None
+            append_reply(target, reply)
+            await conn.execute(
+                "UPDATE documents SET highlights = $1::jsonb, "
+                "version = COALESCE(version, 0) + 1, updated_at = now() "
+                "WHERE id = $2 AND user_id = $3",
+                _json.dumps(highlights), doc_id, self.user_id,
+            )
+            return target
 
     async def archive_documents(self, doc_ids: list[str]) -> int:
         result = await service_execute(
@@ -499,7 +497,7 @@ class PostgresVaultFS(VaultFS):
             async with session.client("s3") as s3:
                 resp = await s3.get_object(Bucket=settings.S3_BUCKET, Key=key)
                 return await resp["Body"].read()
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Failed to load S3 key %s: %s", key, e)
             return None
 
@@ -529,7 +527,7 @@ class PostgresVaultFS(VaultFS):
                 "SET page = EXCLUDED.page, created_at = now()",
                 source_id, target_id, kb_id, ref_type, page,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("Failed to insert reference %s -> %s: %s", source_id[:8], target_id[:8], e)
 
     async def replace_references(

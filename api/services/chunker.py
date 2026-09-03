@@ -4,9 +4,9 @@ Splits document content into ~512 token chunks with ~128 token overlap.
 Tracks markdown headers to build breadcrumb context per chunk.
 """
 
-import re
 import logging
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass
 
 import asyncpg
 
@@ -61,7 +61,7 @@ def chunk_text(
         if header_match:
             level = len(header_match.group(1))
             heading = header_match.group(2).strip()
-            header_stack = [(l, t) for l, t in header_stack if l < level]
+            header_stack = [(existing_level, t) for existing_level, t in header_stack if existing_level < level]
             header_stack.append((level, heading))
 
         if current_tokens + para_tokens > chunk_size and current_blocks:

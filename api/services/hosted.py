@@ -257,11 +257,11 @@ class HostedKBService(KBService):
             )
         except asyncpg.UniqueViolationError as e:
             if e.constraint_name == "idx_knowledge_bases_public_slug":
-                raise HTTPException(status_code=409, detail="That public slug is already taken — try another.")
+                raise HTTPException(status_code=409, detail="That public slug is already taken — try another.") from e
             raise
         except asyncpg.CheckViolationError as e:
             if e.constraint_name == "knowledge_bases_public_slug_format":
-                raise HTTPException(status_code=400, detail="Slug must be 2–80 lowercase characters, digits, or hyphens (no leading/trailing hyphen).")
+                raise HTTPException(status_code=400, detail="Slug must be 2–80 lowercase characters, digits, or hyphens (no leading/trailing hyphen).") from e
             raise
         return dict(row) if row else None
 

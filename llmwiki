@@ -27,6 +27,15 @@ MCP_DIR = REPO_ROOT / "mcp"
 WEB_DIR = REPO_ROOT / "web"
 
 
+def _load_migration_runner():
+    import importlib.util
+    path = API_DIR / "infra" / "db" / "local_migrations.py"
+    spec = importlib.util.spec_from_file_location("local_migrations", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _sanitize_name(name: str) -> str:
     slug = name.lower().strip()
     slug = re.sub(r"[^a-z0-9\s-]", "", slug)
@@ -49,13 +58,9 @@ def cmd_init(workspace: str) -> None:
 
     # Initialize SQLite
     import sqlite3
-    schema_path = REPO_ROOT / "shared" / "sqlite_schema.sql"
-    if not schema_path.exists():
-        print(f"Error: schema not found at {schema_path}", file=sys.stderr)
-        sys.exit(1)
+    _load_migration_runner().apply_migrations(str(db_path))
 
     conn = sqlite3.connect(str(db_path))
-    conn.executescript(schema_path.read_text(encoding="utf-8"))
 
     import uuid
     user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, "local"))

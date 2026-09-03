@@ -26,3 +26,13 @@ max-complexity = 12
 
 [lint.per-file-ignores]
 "tests/**" = ["B", "C90", "BLE"]
+# Sentry/Logfire must configure before route modules import.
+"api/main.py" = ["E402"]
+# C901 refactor backlog — remove an entry once its functions are decomposed.
+"api/html_parser/parser.py" = ["C90"]
+"api/domain/local_processor.py" = ["C90"]
+"api/infra/tus.py" = ["C90"]
+"api/services/local.py" = ["C90"]
+"api/services/references.py" = ["C90"]
+"mcp/tools/list.py" = ["C90"]
+"mcp/tools/references.py" = ["C90"]

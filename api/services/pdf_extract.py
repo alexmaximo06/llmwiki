@@ -142,7 +142,7 @@ def _parse_data_uri(data_uri: str) -> tuple[bytes, str] | None:
         if "jpeg" in header or "jpg" in header:
             fmt = "jpeg"
         return base64.b64decode(b64), fmt
-    except Exception:
+    except ValueError:
         return None
 
 

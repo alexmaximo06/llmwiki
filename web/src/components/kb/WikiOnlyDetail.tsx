@@ -453,6 +453,12 @@ export function WikiOnlyDetail({
 
   // ─── Page deletion (structural pages are protected, like the MCP delete tool) ─
   const [confirmingDelete, setConfirmingDelete] = React.useState(false)
+  const rootRef = React.useRef<HTMLDivElement>(null)
+
+  const restoreFocusToRoot = React.useCallback((event: Event) => {
+    event.preventDefault()
+    rootRef.current?.focus()
+  }, [])
   const [deletingPage, setDeletingPage] = React.useState(false)
   const isStructuralPage = wikiActivePath === 'overview.md' || wikiActivePath === 'log.md'
 
@@ -513,7 +519,7 @@ export function WikiOnlyDetail({
   )
 
   return (
-    <div className="flex h-full flex-col">
+    <div ref={rootRef} tabIndex={-1} className="flex h-full flex-col outline-none">
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="shrink-0">
           <KBSidenav
@@ -527,7 +533,7 @@ export function WikiOnlyDetail({
             loading={loading}
             onUpload={() => { setFilesNavPending(true); router.push(`/wikis/${kbSlug}/files`) }}
             filesViewActive={filesNavPending}
-            onFilesToggle={() => { setFilesNavPending(true); router.push(`/wikis/${kbSlug}/files`) }}
+            onOpenFiles={() => { setFilesNavPending(true); router.push(`/wikis/${kbSlug}/files`) }}
             graphViewActive={false}
             onGraphToggle={() => router.push(`/wikis/${kbSlug}/graph`)}
             onOpenSourceDoc={(docId) => {
@@ -564,7 +570,7 @@ export function WikiOnlyDetail({
               />
             </div>
           ) : hasNavigableWiki && wikiActivePath ? (
-            <div className="h-full animate-tab-in">
+            <div key={wikiActivePath} className="h-full animate-tab-in">
             <WikiContent
               content={pageContent}
               title={pageTitle}
@@ -641,6 +647,7 @@ export function WikiOnlyDetail({
         busy={deletingPage}
         onConfirm={handleDeletePage}
         destructive
+        onCloseAutoFocus={restoreFocusToRoot}
       />
     </div>
   )

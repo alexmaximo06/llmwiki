@@ -18,7 +18,9 @@ interface NameDialogProps {
   onSubmit: () => void
   placeholder?: string
   submitDisabled?: boolean
-  onCloseAutoFocus?: (event: Event) => void
+  /** Dialogs open from menus/popovers that unmount, so Radix's default focus
+   *  restore lands on <body> — every consumer must name a stable target. */
+  onCloseAutoFocus: (event: Event) => void
 }
 
 export function NameDialog({
@@ -44,12 +46,13 @@ export function NameDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent showCloseButton={false} aria-describedby={undefined} onCloseAutoFocus={onCloseAutoFocus}>
+      <DialogContent showCloseButton={false} aria-describedby={undefined} onCloseAutoFocus={onCloseAutoFocus} aria-busy={busy}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
         <Input
           aria-label={title}
+          disabled={busy}
           value={value}
           onChange={(event) => onValueChange(event.target.value)}
           onKeyDown={(event) => {

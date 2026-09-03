@@ -5,7 +5,6 @@ Tests every VaultFS method. Self-contained — no Postgres needed.
 
 import uuid
 
-import pytest
 from tests.integration.mcp.conftest import TEST_USER_ID
 
 
@@ -162,7 +161,7 @@ class TestDocumentCRUD:
 
     async def test_create_wiki_document(self, fs):
         instance, kb_id = fs
-        doc = await instance.create_document(kb_id, "scaling.md", "Scaling", "/wiki/concepts/", "md", "# Scaling", ["concept"])
+        await instance.create_document(kb_id, "scaling.md", "Scaling", "/wiki/concepts/", "md", "# Scaling", ["concept"])
         fetched = await instance.get_document(kb_id, "scaling.md", "/wiki/concepts/")
         assert fetched is not None
         assert fetched["content"] == "# Scaling"

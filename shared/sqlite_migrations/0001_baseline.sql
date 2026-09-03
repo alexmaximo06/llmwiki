@@ -1,8 +1,5 @@
--- LLM Wiki local index schema (SQLite + FTS5)
--- This is derived state — deletable and rebuildable from the workspace filesystem.
-
-PRAGMA journal_mode=WAL;
-PRAGMA foreign_keys=ON;
+-- Baseline schema as of 2026-08-14. Never edit — append numbered migrations instead.
+-- The index is derived state: deletable and rebuildable from the workspace filesystem.
 
 CREATE TABLE IF NOT EXISTS workspace (
     id TEXT PRIMARY KEY,

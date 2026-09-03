@@ -17,7 +17,7 @@ def _parse_json(raw, default=None):
     """Safely parse a JSON string or return the value if already parsed."""
     if raw is None:
         return default
-    if isinstance(raw, (dict, list)):
+    if isinstance(raw, dict | list):
         return raw
     try:
         return json.loads(raw)

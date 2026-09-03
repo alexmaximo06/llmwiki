@@ -7,7 +7,6 @@ Uses SqliteVaultFS with a temp workspace — no Postgres needed.
 import json
 
 import pytest
-from tests.integration.mcp.conftest import TEST_USER_ID
 
 
 def _make_kb(kb_id: str) -> dict:
@@ -26,8 +25,9 @@ class _AcceptDeleteContext:
 class TestWriteReadFlow:
 
     async def test_edit_tool_schema_uses_anthropic_string_names(self):
-        from mcp.server.fastmcp import FastMCP
         from tools.write import register
+
+        from mcp.server.fastmcp import FastMCP
 
         mcp = FastMCP("test")
         register(mcp, lambda _ctx: "user", lambda _user_id: None)
@@ -46,8 +46,8 @@ class TestWriteReadFlow:
 
     async def test_create_then_read_round_trip(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -114,8 +114,8 @@ class TestWriteReadFlow:
 
     async def test_create_uses_frontmatter_tags_as_index_source(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.search import SearchHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -144,8 +144,8 @@ class TestWriteReadFlow:
 
     async def test_create_with_overwrite_replaces_content(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -160,8 +160,8 @@ class TestWriteReadFlow:
 
     async def test_edit_replaces_text(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -195,8 +195,8 @@ class TestWriteReadFlow:
 
     async def test_edit_keeps_index_synced_to_frontmatter_tags(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.search import SearchHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -217,8 +217,8 @@ class TestWriteReadFlow:
 
     async def test_append_adds_content(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -234,8 +234,8 @@ class TestWriteReadFlow:
 
     async def test_append_inserts_before_trailing_footnotes(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -257,8 +257,8 @@ class TestWriteReadFlow:
 
     async def test_append_renumbers_colliding_footnotes(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -285,8 +285,8 @@ class TestWriteReadFlow:
 
     async def test_append_keeps_index_synced_to_frontmatter_tags(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.search import SearchHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -318,8 +318,8 @@ class TestLintTool:
 
     async def test_lint_passes_clean_wiki_page(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.lint import LintHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -599,8 +599,8 @@ class TestReadModes:
 
     async def test_read_falls_back_to_title(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -612,8 +612,8 @@ class TestReadModes:
 
     async def test_read_sections_filters_headings(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -627,8 +627,8 @@ class TestReadModes:
 
     async def test_read_glob_batch(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -692,11 +692,9 @@ class TestReadModes:
 
     async def test_read_backlinks_shown(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
 
         kb = _make_kb(kb_id)
-        writer = WriteHandler(instance, kb)
         reader = ReadHandler(instance, kb)
 
         target = await instance.create_document(kb_id, "target.md", "Target", "/wiki/", "md", "target content", ["tag"])
@@ -711,8 +709,8 @@ class TestSearchDeleteLifecycle:
 
     async def test_search_list_groups_sources_and_wiki(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.search import SearchHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -727,8 +725,8 @@ class TestSearchDeleteLifecycle:
 
     async def test_search_list_filters_by_tags(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.search import SearchHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -743,8 +741,8 @@ class TestSearchDeleteLifecycle:
 
     async def test_search_chunks_after_indexing(self, fs, insert_chunk):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.search import SearchHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -785,8 +783,8 @@ class TestSearchDeleteLifecycle:
 
     async def test_delete_exact_path(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.delete import DeleteHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -831,10 +829,10 @@ class TestSearchDeleteLifecycle:
 
     async def test_full_lifecycle(self, fs, insert_chunk):
         instance, kb_id = fs
-        from tools.write import WriteHandler
+        from tools.delete import DeleteHandler
         from tools.read import ReadHandler
         from tools.search import SearchHandler
-        from tools.delete import DeleteHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)

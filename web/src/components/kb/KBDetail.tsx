@@ -393,6 +393,12 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
 
   const [confirmingBulkDelete, setConfirmingBulkDelete] = React.useState(false)
   const [bulkDeleting, setBulkDeleting] = React.useState(false)
+  const rootRef = React.useRef<HTMLDivElement>(null)
+
+  const restoreFocusToRoot = React.useCallback((event: Event) => {
+    event.preventDefault()
+    rootRef.current?.focus()
+  }, [])
 
   const handleDeleteSelected = async () => {
     const t = getToken()
@@ -411,7 +417,6 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
 
   // ─── Navigation handlers ─────────────────────────────────────
 
-  // Wiki page click: only updates ?p= search param (instant, no route change)
   const handleWikiSelect = React.useCallback((path: string, docNumber?: number | null) => {
     setActiveView('wiki')
     setWikiActivePath(path)
@@ -420,27 +425,20 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
       return relative === path
     })?.document_number ?? null
     lastWikiDocNumberRef.current = num
-    if (num != null) updateParam('p', String(num))
-  }, [updateParam, wikiDocs])
-
-  const handleFilesToggle = React.useCallback(() => {
-    if (activeView === 'doc') {
-      // Doc is open — close it, go to root file browser
-      setActiveSourceDocId(null)
-      setActiveView('files')
-      navigateToView('files')
-    } else if (activeView === 'files') {
-      // Already browsing files — toggle back to wiki
-      const sp = lastWikiDocNumberRef.current != null
-        ? { p: String(lastWikiDocNumberRef.current) }
-        : undefined
-      setActiveView('wiki')
-      navigateToView('wiki', { searchParams: sp })
+    // On the wiki route a page switch is just a ?p= replace; from /files or
+    // /graph the pathname must change too, or reload restores the wrong view.
+    if (window.location.pathname === `/wikis/${kbSlug}`) {
+      if (num != null) updateParam('p', String(num))
     } else {
-      // From wiki/graph — switch to files
-      setActiveView('files')
-      navigateToView('files')
+      navigateToView('wiki', num != null ? { searchParams: { p: String(num) } } : undefined)
     }
+  }, [updateParam, navigateToView, kbSlug, wikiDocs])
+
+  const handleOpenFiles = React.useCallback(() => {
+    if (activeView === 'files') return
+    if (activeView === 'doc') setActiveSourceDocId(null)
+    setActiveView('files')
+    navigateToView('files')
   }, [activeView, navigateToView])
 
   const handleGraphToggle = React.useCallback(() => {
@@ -795,7 +793,9 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
   // ─── Render ──────────────────────────────────────────────────
   return (
     <div
-      className="flex flex-col h-full relative"
+      ref={rootRef}
+      tabIndex={-1}
+      className="flex flex-col h-full relative outline-none"
       onDragEnter={handleFileDragEnter}
       onDragLeave={handleFileDragLeave}
       onDragOver={handleFileDragOver}
@@ -832,7 +832,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
             loading={loading}
             onUpload={() => handleUploadClick()}
             filesViewActive={filesViewActive}
-            onFilesToggle={handleFilesToggle}
+            onOpenFiles={handleOpenFiles}
             graphViewActive={graphViewActive}
             onGraphToggle={handleGraphToggle}
             onOpenSourceDoc={handleOpenSourceDoc}
@@ -993,6 +993,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
         busy={bulkDeleting}
         onConfirm={handleDeleteSelected}
         destructive
+        onCloseAutoFocus={restoreFocusToRoot}
       />
     </div>
   )

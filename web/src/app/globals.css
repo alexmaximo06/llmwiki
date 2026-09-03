@@ -271,8 +271,16 @@
   }
 }
 
+/* fill-mode must not retain the transform: a retained transform makes this a
+   containing block for position:fixed descendants (fullscreen viewers). */
 .animate-tab-in {
-  animation: tab-in 200ms ease-out both;
+  animation: tab-in 200ms ease-out backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-tab-in {
+    animation: none;
+  }
 }
 
 /* Ensure overlays, sheets, popovers mirror the radius */

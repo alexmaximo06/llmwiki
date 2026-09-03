@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 
 def _make_kb(kb_id: str) -> dict:
     return {"id": kb_id, "name": "test-workspace", "slug": "test-workspace"}

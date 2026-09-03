@@ -1,6 +1,6 @@
 """Unit tests for the text chunker."""
 
-from services.chunker import chunk_text, chunk_pages, _estimate_tokens, CHUNK_SIZE
+from services.chunker import _estimate_tokens, chunk_pages, chunk_text
 
 
 class TestChunkText:
