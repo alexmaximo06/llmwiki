@@ -96,6 +96,28 @@ class TestWriteReadFlow:
         result = await linter.run(path="/wiki/auto-metadata.md", include_graph=False)
         assert "Lint passed" in result
 
+    async def test_slug_title_uses_frontmatter_title(self, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        page = "---\ntitle: Firefox Playwright MCP\ndate: 2026-10-08\ntags: [mcp]\n---\n\nBody."
+
+        # Slug-style title: names the file, the frontmatter title keeps its casing (not "Mcp")
+        await writer.create("/wiki/", "firefox-playwright-mcp", page, ["mcp"], "", False)
+        doc = await instance.get_document(kb_id, "firefox-playwright-mcp.md", "/wiki/")
+        assert doc["title"] == "Firefox Playwright MCP"
+
+        # An explicit title is kept even when the frontmatter differs
+        await writer.create("/wiki/", "Playwright Notes", page, ["mcp"], "", False)
+        doc = await instance.get_document(kb_id, "playwright-notes.md", "/wiki/")
+        assert doc["title"] == "Playwright Notes"
+
+        # Slug without a frontmatter title (non-wiki note) is still humanized
+        await writer.create("/", "plain-note", "No frontmatter here.", ["note"], "", False)
+        doc = await instance.get_document(kb_id, "plain-note.md", "/")
+        assert doc["title"] == "Plain Note"
+
     async def test_create_rejects_missing_title(self, fs):
         instance, kb_id = fs
         from tools.write import WriteHandler

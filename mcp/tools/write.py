@@ -85,6 +85,17 @@ def _effective_tags(content: str, provided: list[str] | None) -> list[str] | Non
     return provided
 
 
+def _is_slug_title(title: str) -> bool:
+    """True for file-name style titles (`firefox-playwright-mcp`) that get humanized."""
+    clean = re.sub(r"\.(md|txt|svg|csv|json|xml|html)$", "", title)
+    return clean == clean.lower() and "-" in clean
+
+
+def _frontmatter_title(content: str) -> str | None:
+    fm_title = _parse_frontmatter(content).get("title")
+    return fm_title.strip() if isinstance(fm_title, str) and fm_title.strip() else None
+
+
 def _effective_date(content: str, provided: str | None = None) -> str | None:
     """Use frontmatter date as canonical when present; otherwise fallback."""
     fm_date, _ = _extract_metadata(_parse_frontmatter(content))
@@ -219,8 +230,13 @@ class WriteHandler:
 
         dir_path = self._to_dir_path(path)
         filename, file_type = self._title_to_filename(title)
+        # A slug-style title only names the file; humanizing it loses casing
+        # ("...-mcp" -> "Mcp"), so prefer the page's own frontmatter title.
+        slug_title = _is_slug_title(title)
         title = self._humanize_title(title)
         content = _ensure_wiki_frontmatter(content, title, tags, date_str, dir_path, filename, file_type)
+        if slug_title:
+            title = _frontmatter_title(content) or title
 
         size_error = _content_size_error(content)
         if size_error:
