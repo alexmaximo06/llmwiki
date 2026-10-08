@@ -124,6 +124,9 @@ class VaultFS(ABC):
     async def propagate_staleness(self, doc_id: str) -> None: ...
 
     @abstractmethod
+    async def clear_staleness(self, doc_id: str) -> None: ...
+
+    @abstractmethod
     async def get_backlinks(self, doc_id: str) -> list[dict]: ...
 
     @abstractmethod

@@ -567,7 +567,13 @@ class PostgresVaultFS(VaultFS):
             "WHERE id IN ("
             "  SELECT source_document_id FROM document_references "
             "  WHERE target_document_id = $1 AND reference_type = 'links_to'"
-            ") AND stale_since IS NULL AND user_id = $2",
+            ") AND stale_since IS NULL AND id != $1 AND user_id = $2",
+            doc_id, self.user_id,
+        )
+
+    async def clear_staleness(self, doc_id: str) -> None:
+        await service_execute(
+            "UPDATE documents SET stale_since = NULL WHERE id = $1 AND user_id = $2",
             doc_id, self.user_id,
         )
 

@@ -481,6 +481,19 @@ class TestReferences:
         stale_ids = [s["filename"] for s in stale]
         assert "linker.md" in stale_ids
 
+    async def test_clear_staleness_and_self_link(self, fs):
+        instance, kb_id = fs
+        page = await instance.create_document(kb_id, "page.md", "Page", "/wiki/", "md", "content", ["tag"])
+        linker = await instance.create_document(kb_id, "linker.md", "Linker", "/wiki/", "md", "content", ["tag"])
+        await instance.upsert_reference(str(page["id"]), str(page["id"]), kb_id, "links_to", None)
+        await instance.upsert_reference(str(linker["id"]), str(page["id"]), kb_id, "links_to", None)
+
+        await instance.propagate_staleness(str(page["id"]))
+        assert [s["filename"] for s in await instance.find_stale_pages(kb_id)] == ["linker.md"]
+
+        await instance.clear_staleness(str(linker["id"]))
+        assert await instance.find_stale_pages(kb_id) == []
+
     async def test_find_uncited_sources(self, fs):
         instance, kb_id = fs
         await instance.create_document(kb_id, "cited.pdf", "Cited", "/", "pdf", "", ["tag"])

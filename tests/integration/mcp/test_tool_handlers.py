@@ -197,6 +197,25 @@ class TestWriteReadFlow:
         assert "Goodbye world" in content
         assert "Hello world" not in content
 
+    async def test_wiki_write_clears_own_stale_flag(self, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        def page(title: str, link: str) -> str:
+            return f"---\ntitle: {title}\ndescription: Test page.\n---\n\nSee {link}. v1"
+
+        await writer.create("/wiki/", "Alpha", page("Alpha", "[Beta](/wiki/beta.md)"), ["tag"], "", False)
+        await writer.create("/wiki/", "Beta", page("Beta", "[Alpha](/wiki/alpha.md)"), ["tag"], "", False)
+        # Re-save Alpha now that Beta exists, so its link to Beta is recorded.
+        await writer.edit("/wiki/alpha.md", "v1", "v1.1")
+
+        await writer.edit("/wiki/beta.md", "v1", "v2")
+        assert [s["filename"] for s in await instance.find_stale_pages(kb_id)] == ["alpha.md"]
+
+        await writer.edit("/wiki/alpha.md", "v1.1", "v2")
+        assert [s["filename"] for s in await instance.find_stale_pages(kb_id)] == ["beta.md"]
+
     async def test_edit_rejects_no_match(self, fs):
         instance, kb_id = fs
         from tools.write import WriteHandler

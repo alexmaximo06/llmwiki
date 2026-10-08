@@ -398,9 +398,14 @@ class WriteHandler:
         return self._format_append_response(path, dir_path, filename) + impact
 
     async def _sync_references(self, doc_id: str, content: str, dir_path: str, file_type: str = "md") -> None:
-        """Update citation graph and propagate staleness for wiki pages."""
+        """Update citation graph and propagate staleness for wiki pages.
+
+        Writing a page counts as reviewing it, so its own stale flag is cleared
+        before the pages that link to it are flagged.
+        """
         if dir_path.startswith("/wiki/") and file_type == "md":
             await update_references(self.fs, self.kb_id, doc_id, content, dir_path)
+            await self.fs.clear_staleness(doc_id)
             await self.fs.propagate_staleness(doc_id)
 
     async def _get_wiki_impact(self, doc_id: str, dir_path: str) -> str:

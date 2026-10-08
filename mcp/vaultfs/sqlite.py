@@ -640,9 +640,14 @@ class SqliteVaultFS(VaultFS):
             "WHERE id IN ("
             "  SELECT source_document_id FROM document_references "
             "  WHERE target_document_id = ? AND reference_type = 'links_to'"
-            ") AND stale_since IS NULL",
-            (doc_id,),
+            ") AND stale_since IS NULL AND id != ?",
+            (doc_id, doc_id),
         )
+        await db.commit()
+
+    async def clear_staleness(self, doc_id: str) -> None:
+        db = self._db_or_raise()
+        await db.execute("UPDATE documents SET stale_since = NULL WHERE id = ?", (doc_id,))
         await db.commit()
 
     async def get_backlinks(self, doc_id: str) -> list[dict]:
