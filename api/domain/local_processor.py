@@ -278,7 +278,8 @@ async def process_document_isolated(workspace: Path, doc_id: str) -> None:
     flush another writer's open transaction on a shared connection."""
     try:
         async with _process_semaphore:
-            db = await create_pool(str(workspace / ".llmwiki" / "index.db"), init_schema=False)
+            from infra.local_paths import index_db_path
+            db = await create_pool(str(index_db_path(workspace)), init_schema=False)
             try:
                 await process_document(db, doc_id, workspace)
             finally:
@@ -502,7 +503,8 @@ async def _process_office(db: aiosqlite.Connection, doc_id: str, file_path: Path
         converted_pdf = pdf_files[0]
 
         # Store converted PDF in cache for the viewer
-        cache_dir = workspace / ".llmwiki" / "cache" / "local" / doc_id
+        from infra.local_paths import index_cache_root
+        cache_dir = index_cache_root(workspace) / "local" / doc_id
         await _to_thread_joined(
             _copy_file,
             converted_pdf,

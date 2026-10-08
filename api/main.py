@@ -111,14 +111,15 @@ async def _local_lifespan_inner(app: FastAPI):
     from infra.db.sqlite import create_pool as create_sqlite_pool
     from infra.storage.local import LocalStorageService
     from infra.auth.local import LocalAuthProvider
+    from infra.local_paths import index_cache_root, index_db_path, index_root
 
     workspace = Path(settings.WORKSPACE_PATH).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "wiki").mkdir(exist_ok=True)
-    (workspace / ".llmwiki").mkdir(exist_ok=True)
-    (workspace / ".llmwiki" / "cache").mkdir(exist_ok=True)
+    index_root(workspace).mkdir(parents=True, exist_ok=True)
+    index_cache_root(workspace).mkdir(parents=True, exist_ok=True)
 
-    db_path = str(workspace / ".llmwiki" / "index.db")
+    db_path = str(index_db_path(workspace))
     db = await create_sqlite_pool(db_path)
 
     local_user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, "local"))
@@ -157,8 +158,9 @@ async def _local_lifespan(app: FastAPI):
     db = await _local_lifespan_inner(app)
     from pathlib import Path
     from infra.db.sqlite import create_pool as create_sqlite_pool
+    from infra.local_paths import index_db_path
     workspace = Path(app.state.workspace_path)
-    db_path = str(workspace / ".llmwiki" / "index.db")
+    db_path = str(index_db_path(workspace))
 
     # Each background writer gets its own connection so a commit can't flush
     # another writer's (or a request handler's) open transaction.

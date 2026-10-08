@@ -77,8 +77,9 @@ class SqliteVaultFS(VaultFS):
         """Initialize the SQLite connection and workspace root for the given path."""
         global _db, _workspace_root
         _workspace_root = Path(workspace_path).resolve()
-        db_path = os.path.join(workspace_path, ".llmwiki", "index.db")
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        from local_paths import index_db_path, index_root
+        db_path = str(index_db_path(workspace_path))
+        os.makedirs(index_root(workspace_path), exist_ok=True)
         _db = await aiosqlite.connect(db_path)
         await _db.execute("PRAGMA journal_mode=WAL")
         await _db.execute("PRAGMA foreign_keys=ON")
@@ -551,8 +552,10 @@ class SqliteVaultFS(VaultFS):
     def _load_local_bytes(self, key: str) -> bytes | None:
         if _workspace_root is None:
             return None
-        cache_path = _workspace_root / ".llmwiki" / "cache" / key
-        if cache_path.is_file() and cache_path.is_relative_to(_workspace_root):
+        from local_paths import index_cache_root
+        cache_root = index_cache_root(_workspace_root).resolve()
+        cache_path = (cache_root / key).resolve()
+        if cache_path.is_file() and cache_path.is_relative_to(cache_root):
             return cache_path.read_bytes()
         root_path = _workspace_root / key
         if root_path.is_file() and root_path.is_relative_to(_workspace_root):

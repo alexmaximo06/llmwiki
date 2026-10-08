@@ -8,13 +8,14 @@ import json
 import logging
 import shutil
 from pathlib import Path
+from infra.local_paths import index_cache_root
 
 logger = logging.getLogger(__name__)
 
 
 class LocalStorageService:
     def __init__(self, workspace_path: str, api_url: str = "http://localhost:8000"):
-        self._root = Path(workspace_path) / ".llmwiki" / "cache"
+        self._root = index_cache_root(workspace_path)
         self._root.mkdir(parents=True, exist_ok=True)
         self._api_url = api_url.rstrip("/")
 

@@ -35,8 +35,9 @@ async def _init_workspace(workspace_path: str) -> None:
     ws = Path(workspace_path).resolve()
 
     (ws / "wiki").mkdir(parents=True, exist_ok=True)
-    (ws / ".llmwiki").mkdir(parents=True, exist_ok=True)
-    (ws / ".llmwiki" / "cache").mkdir(parents=True, exist_ok=True)
+    from local_paths import index_cache_root, index_root
+    index_root(ws).mkdir(parents=True, exist_ok=True)
+    index_cache_root(ws).mkdir(parents=True, exist_ok=True)
 
     from vaultfs import SqliteVaultFS
     await SqliteVaultFS.init(str(ws))

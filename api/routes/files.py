@@ -13,6 +13,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
+from infra.local_paths import index_cache_root
 
 router = APIRouter(tags=["files"])
 
@@ -30,8 +31,9 @@ def _resolve_safe(key: str) -> Path:
         raise HTTPException(status_code=501, detail="Local file serving not configured")
 
     # Try .llmwiki/cache/ first (derived artifacts), then workspace root (source files)
-    cache_path = (_workspace_root / ".llmwiki" / "cache" / key).resolve()
-    if cache_path.is_file() and cache_path.is_relative_to(_workspace_root):
+    cache_root = index_cache_root(_workspace_root).resolve()
+    cache_path = (cache_root / key).resolve()
+    if cache_path.is_file() and cache_path.is_relative_to(cache_root):
         return cache_path
 
     root_path = (_workspace_root / key).resolve()

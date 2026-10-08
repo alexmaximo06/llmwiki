@@ -27,6 +27,11 @@ MCP_DIR = REPO_ROOT / "mcp"
 WEB_DIR = REPO_ROOT / "web"
 
 
+def _index_root(workspace: Path) -> Path:
+    configured = os.environ.get("LLMWIKI_INDEX_PATH", "").strip()
+    return Path(configured).expanduser().resolve() if configured else workspace / ".llmwiki"
+
+
 def _sanitize_name(name: str) -> str:
     slug = name.lower().strip()
     slug = re.sub(r"[^a-z0-9\s-]", "", slug)
@@ -38,10 +43,11 @@ def cmd_init(workspace: str) -> None:
     ws = Path(workspace).resolve()
     ws.mkdir(parents=True, exist_ok=True)
     (ws / "wiki").mkdir(exist_ok=True)
-    (ws / ".llmwiki").mkdir(exist_ok=True)
-    (ws / ".llmwiki" / "cache").mkdir(exist_ok=True)
+    index_root = _index_root(ws)
+    index_root.mkdir(parents=True, exist_ok=True)
+    (index_root / "cache").mkdir(exist_ok=True)
 
-    db_path = ws / ".llmwiki" / "index.db"
+    db_path = index_root / "index.db"
     if db_path.exists():
         print(f"Workspace already initialized: {ws}")
         print(f"  index.db: {db_path}")
@@ -95,7 +101,7 @@ def cmd_init(workspace: str) -> None:
 
     print(f"✓ Initialized workspace: {ws}")
     print(f"  wiki/overview.md — created")
-    print(f"  .llmwiki/index.db — created")
+    print(f"  index.db: {db_path} — created")
 
 
 def _index_existing_files(ws: Path, db_path: Path, user_id: str, ws_id: str) -> None:
@@ -181,7 +187,7 @@ def _index_existing_files(ws: Path, db_path: Path, user_id: str, ws_id: str) -> 
 
 def cmd_serve(workspace: str, open_browser: bool = True) -> None:
     ws = Path(workspace).resolve()
-    if not (ws / ".llmwiki" / "index.db").exists():
+    if not (_index_root(ws) / "index.db").exists():
         print(f"Workspace not initialized. Run: llmwiki init {ws}", file=sys.stderr)
         sys.exit(1)
 
@@ -257,14 +263,14 @@ def _supervise(api_proc: subprocess.Popen, web_proc: subprocess.Popen, open_brow
 
 def cmd_open(workspace: str) -> None:
     ws = Path(workspace).resolve()
-    if not (ws / ".llmwiki" / "index.db").exists():
+    if not (_index_root(ws) / "index.db").exists():
         cmd_init(str(ws))
     cmd_serve(str(ws), open_browser=True)
 
 
 def cmd_mcp(workspace: str) -> None:
     ws = Path(workspace).resolve()
-    if not (ws / ".llmwiki" / "index.db").exists():
+    if not (_index_root(ws) / "index.db").exists():
         cmd_init(str(ws))
 
     # local_server lives in mcp/; chdir so `python -m local_server` resolves
@@ -294,6 +300,10 @@ def cmd_mcp_config(workspace: str, name: str | None = None) -> None:
             }
         }
     }
+    if os.environ.get("LLMWIKI_INDEX_PATH", "").strip():
+        config["mcpServers"][server_name]["env"] = {
+            "LLMWIKI_INDEX_PATH": str(_index_root(ws))
+        }
 
     print(f"# Add to claude_desktop_config.json:")
     print(f"# This MCP server is scoped to: {ws}")
@@ -304,7 +314,7 @@ def cmd_mcp_config(workspace: str, name: str | None = None) -> None:
 
 def cmd_reindex(workspace: str) -> None:
     ws = Path(workspace).resolve()
-    db_path = ws / ".llmwiki" / "index.db"
+    db_path = _index_root(ws) / "index.db"
     if not db_path.exists():
         print(f"No index found. Run: llmwiki init {ws}", file=sys.stderr)
         sys.exit(1)

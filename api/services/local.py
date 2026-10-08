@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from config import settings
+from infra.local_paths import index_cache_root
 from domain.watcher import mark_written
 from fastapi import HTTPException
 from infra.db.sqlite import SQLiteChunkRepository, SQLiteDocumentRepository, serialized_write
@@ -249,7 +250,7 @@ class LocalDocumentService(DocumentService):
         ]:
             if ext in check_ext:
                 cache_key = f"{doc.get('user_id', 'local')}/{doc['id']}/{cache_suffix}"
-                if (_workspace_root() / ".llmwiki" / "cache" / cache_key).is_file():
+                if (index_cache_root(_workspace_root()) / cache_key).is_file():
                     return {"url": f"{api_url}/v1/files/{cache_key}"}
 
         relative = doc.get("relative_path") or (doc["path"].rstrip("/") + "/" + doc["filename"]).lstrip("/")
