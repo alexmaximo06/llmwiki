@@ -10,6 +10,14 @@ class DuplicateDocumentError(Exception):
         super().__init__(f"document already exists at {dir_path}{filename}")
 
 
+class MoveConflictError(Exception):
+    """Raised when a move would land on a path that is already taken."""
+
+    def __init__(self, path: str):
+        self.path = path
+        super().__init__(f"{path} already exists")
+
+
 class StorageQuotaExceededError(Exception):
     """Raised when a hosted write would exceed the user's storage quota."""
 
@@ -63,6 +71,13 @@ class VaultFS(ABC):
 
     @abstractmethod
     async def archive_documents(self, doc_ids: list[str]) -> int: ...
+
+    async def move_documents(self, moves: list[tuple[str, str, str]]) -> None:
+        """Relocate (doc_id, new_dir_path, new_filename) entries all-or-nothing.
+
+        Not abstract: hosted storage has no move support yet, so backends opt in.
+        """
+        raise NotImplementedError("moving documents is not supported by this backend")
 
     @abstractmethod
     async def list_documents(self, kb_id: str) -> list[dict]: ...

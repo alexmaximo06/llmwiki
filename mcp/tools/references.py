@@ -8,7 +8,8 @@ from vaultfs import VaultFS
 logger = logging.getLogger(__name__)
 
 _CITATION_RE = re.compile(r"\[\^\d+\]:\s*(.+)$", re.MULTILINE)
-_WIKI_LINK_RE = re.compile(r"(?<!!)\[(?:[^\]]*)\]\(([^)]+)\)")
+WIKI_LINK_RE = re.compile(r"(?<!!)\[(?:[^\]]*)\]\(([^)]+)\)")
+_IMAGE_HREF_RE = re.compile(r"\.(png|jpg|jpeg|gif|webp|svg)$", re.IGNORECASE)
 
 
 def _parse_citation_filename(raw: str) -> tuple[str, int | None]:
@@ -28,35 +29,50 @@ def _parse_citation_filename(raw: str) -> tuple[str, int | None]:
     return filename, page
 
 
+def resolve_wiki_href(href: str, current_dir: str) -> str | None:
+    """Resolve a link href to a wiki-relative path; None for external, anchor and image links."""
+    if href.startswith(("http", "#", "mailto:", "data:")):
+        return None
+    if _IMAGE_HREF_RE.search(href):
+        return None
+
+    if href.startswith("/wiki/"):
+        resolved = href.replace("/wiki/", "", 1)
+    elif href.startswith("./"):
+        resolved = (current_dir + href[2:]) if current_dir else href[2:]
+    elif href.startswith("../"):
+        parts = (current_dir.rstrip("/") + "/" + href).split("/")
+        resolved_parts = []
+        for p in parts:
+            if p == "..":
+                if resolved_parts:
+                    resolved_parts.pop()
+            elif p and p != ".":
+                resolved_parts.append(p)
+        resolved = "/".join(resolved_parts)
+    elif "/" not in href:
+        resolved = (current_dir + href) if current_dir else href
+    else:
+        resolved = href
+
+    return resolved or None
+
+
+def lookup_wiki_path(link_path: str, wiki_path_map: dict):
+    """Find a resolved link's target: exact path, then with `.md`, then as a root-level page."""
+    key = link_path.lower()
+    return (
+        wiki_path_map.get(key)
+        or wiki_path_map.get(key + ".md")
+        or wiki_path_map.get(key.split("/")[-1])
+    )
+
+
 def _parse_wiki_links(content: str, current_dir: str) -> list[str]:
     """Extract internal wiki link paths, resolved relative to current_dir."""
     paths = []
-    for match in _WIKI_LINK_RE.finditer(content):
-        href = match.group(1)
-        if href.startswith(("http", "#", "mailto:", "data:")):
-            continue
-        if re.search(r"\.(png|jpg|jpeg|gif|webp|svg)$", href, re.IGNORECASE):
-            continue
-
-        if href.startswith("/wiki/"):
-            resolved = href.replace("/wiki/", "", 1)
-        elif href.startswith("./"):
-            resolved = (current_dir + href[2:]) if current_dir else href[2:]
-        elif href.startswith("../"):
-            parts = (current_dir.rstrip("/") + "/" + href).split("/")
-            resolved_parts = []
-            for p in parts:
-                if p == "..":
-                    if resolved_parts:
-                        resolved_parts.pop()
-                elif p and p != ".":
-                    resolved_parts.append(p)
-            resolved = "/".join(resolved_parts)
-        elif "/" not in href:
-            resolved = (current_dir + href) if current_dir else href
-        else:
-            resolved = href
-
+    for match in WIKI_LINK_RE.finditer(content):
+        resolved = resolve_wiki_href(match.group(1), current_dir)
         if resolved:
             paths.append(resolved)
     return paths
@@ -105,12 +121,7 @@ async def update_references(fs: VaultFS, kb_id: str, document_id: str, content: 
 
     link_paths = _parse_wiki_links(content, wiki_relative_dir)
     for link_path in link_paths:
-        target = wiki_path_to_doc.get(link_path.lower())
-        if not target:
-            target = wiki_path_to_doc.get(link_path.lower() + ".md")
-        if not target:
-            basename = link_path.split("/")[-1].lower()
-            target = wiki_path_to_doc.get(basename)
+        target = lookup_wiki_path(link_path, wiki_path_to_doc)
         if target and str(target["id"]) != document_id:
             edges.append((str(target["id"]), "links_to", None))
 

@@ -10,7 +10,7 @@ You are connected to an **LLM Wiki** — a personal knowledge workspace where yo
 
 1. **Raw Sources** (path: `/`) — uploaded documents (PDFs, notes, images, spreadsheets). Source of truth. Read-only.
 2. **Compiled Wiki** (path: `/wiki/`) — markdown pages YOU create and maintain. You own this layer.
-3. **Tools** — `create_knowledge_base`, `list_knowledge_bases`, `search`, `read`, `create`, `edit`, `append`, `delete` — your interface to both layers.
+3. **Tools** — `create_knowledge_base`, `list_knowledge_bases`, `search`, `read`, `create`, `edit`, `append`, `move`, `delete` — your interface to both layers. Reorganize pages with `move` (local mode) rather than recreating them: it keeps comments, history and page numbers, and rewrites the links that point at moved pages.
 
 Sources normally arrive via the app or browser extension, but `add_source_from_url` (hosted mode) lets you pull a publicly accessible PDF in directly by URL — arXiv abstract or PDF links work as-is. Extraction runs in the background; the document becomes readable/searchable shortly after.
 

@@ -1,5 +1,6 @@
 """SQLite + local filesystem implementation of VaultFS."""
 
+import contextlib
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ from pathlib import Path
 import aiosqlite
 from services.chunker import chunk_text, store_chunks_sqlite
 
-from .base import DuplicateDocumentError, VaultFS
+from .base import DuplicateDocumentError, MoveConflictError, VaultFS
 from .highlights import append_reply, find_highlight, parse_highlights_value
 
 logger = logging.getLogger(__name__)
@@ -374,6 +375,77 @@ class SqliteVaultFS(VaultFS):
         cursor = await db.execute(f"DELETE FROM documents WHERE id IN ({placeholders})", doc_ids)
         await db.commit()
         return cursor.rowcount
+
+    async def move_documents(self, moves: list[tuple[str, str, str]]) -> None:
+        db = self._db_or_raise()
+        if not moves:
+            return
+        placeholders = ",".join("?" for _ in moves)
+        cursor = await db.execute(
+            f"SELECT id, path, filename FROM documents WHERE id IN ({placeholders})",
+            [doc_id for doc_id, _, _ in moves],
+        )
+        current = {row[0]: (row[1], row[2]) for row in await cursor.fetchall()}
+
+        planned: list[tuple[str, str, str, Path, Path]] = []
+        for doc_id, new_dir, new_filename in moves:
+            if doc_id not in current:
+                raise LookupError(f"a page changed during the move ({doc_id})")
+            old_dir, old_filename = current[doc_id]
+            src = self._resolve_path(old_dir.lstrip("/") + old_filename)
+            dst = self._resolve_path(new_dir.lstrip("/") + new_filename)
+            if src is None or dst is None:
+                raise ValueError(f"invalid path {new_dir}{new_filename}")
+            # samefile lets case-only renames through on case-insensitive filesystems.
+            if dst.exists() and not (src.exists() and dst.samefile(src)):
+                raise MoveConflictError(new_dir + new_filename)
+            planned.append((doc_id, new_dir, new_filename, src, dst))
+
+        # Index rows change first, inside one transaction: the API's watcher keys
+        # files by relative_path, so once the rows point at the new paths its
+        # delete/add events for the renames are no-ops instead of a re-index
+        # that would mint new documents (and new ?p= numbers).
+        renamed: list[tuple[Path, Path]] = []
+        target = ""
+        try:
+            for doc_id, new_dir, new_filename, _, _ in planned:
+                target = new_dir + new_filename
+                await db.execute(
+                    "UPDATE documents SET path = ?, filename = ?, relative_path = ?, "
+                    "updated_at = datetime('now') WHERE id = ?",
+                    (new_dir, new_filename, target.lstrip("/"), doc_id),
+                )
+            for *_, src, dst in planned:
+                if not src.exists():
+                    continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                src.rename(dst)
+                renamed.append((src, dst))
+            await db.commit()
+        except Exception as error:
+            for src, dst in reversed(renamed):
+                with contextlib.suppress(OSError):
+                    dst.rename(src)
+            await db.rollback()
+            if isinstance(error, aiosqlite.IntegrityError):
+                raise MoveConflictError(target) from error
+            raise
+
+        self._remove_empty_dirs([src.parent for *_, src, _ in planned])
+
+    def _remove_empty_dirs(self, dirs: list[Path]) -> None:
+        """Prune folders a move left empty, never the workspace or wiki root."""
+        if _workspace_root is None:
+            return
+        keep = {_workspace_root, _workspace_root / "wiki"}
+        for start in sorted(set(dirs), key=lambda p: len(p.parts), reverse=True):
+            current = start
+            while current not in keep and current.is_relative_to(_workspace_root):
+                try:
+                    current.rmdir()
+                except OSError:
+                    break
+                current = current.parent
 
 
     async def list_documents(self, kb_id: str) -> list[dict]:
