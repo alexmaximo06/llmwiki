@@ -5,6 +5,26 @@ import { withSentryConfig } from "@sentry/nextjs";
 const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname),
+  experimental: {
+    // The /api rewrite proxies uploads; the API accepts 100 MiB, so the
+    // proxy cap (default 10 MiB) must sit above it.
+    proxyClientMaxBodySize: 110 * 1024 * 1024,
+  },
+  async rewrites() {
+    // Single-port local deployment: the standalone server proxies /api to the
+    // FastAPI process on the container's loopback.
+    if (process.env.NEXT_PUBLIC_MODE !== "local") return [];
+    return [
+      {
+        source: "/api/:path*",
+        destination: "http://127.0.0.1:8000/:path*",
+      },
+      {
+        source: "/mcp",
+        destination: "http://127.0.0.1:8100/mcp",
+      },
+    ];
+  },
   async headers() {
     return [
       {

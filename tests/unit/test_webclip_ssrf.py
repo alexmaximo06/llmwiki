@@ -14,9 +14,8 @@ import ipaddress
 import socket
 
 import httpx
-import pytest
-
 import infra.safe_fetch as sf
+import pytest
 import services.webclip_assets as w
 
 _REAL_ASYNC_CLIENT = httpx.AsyncClient

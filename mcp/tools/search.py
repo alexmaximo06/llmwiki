@@ -3,10 +3,11 @@
 import logging
 from typing import Literal
 
-from mcp.server.fastmcp import FastMCP, Context
-
 from vaultfs import VaultFS
-from .helpers import deep_link, glob_match, resolve_path, MAX_LIST, MAX_SEARCH
+
+from mcp.server.fastmcp import Context, FastMCP
+
+from .helpers import MAX_LIST, MAX_SEARCH, deep_link, glob_match, resolve_path
 
 logger = logging.getLogger(__name__)
 
@@ -322,14 +323,14 @@ def register(mcp: FastMCP, get_user_id, fs_factory) -> None:
 
         if mode == "list":
             return await handler.list_documents(path, tags)
-        elif mode == "search":
+        if mode == "search":
             if not query:
                 return "search mode requires a query."
             return await handler.search_chunks(
                 query, path, tags, min(limit, MAX_SEARCH),
                 annotated_only=annotated_only, scope=scope,
             )
-        elif mode == "references":
+        if mode == "references":
             return await handler.query_references(path, query)
 
         return f"Unknown mode: {mode}"

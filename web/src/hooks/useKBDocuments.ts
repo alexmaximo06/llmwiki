@@ -58,6 +58,7 @@ function mergePreservingIdentity(
 export function useKBDocuments(knowledgeBaseId: string) {
   const [documents, setDocuments] = React.useState<DocumentListItem[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [loadError, setLoadError] = React.useState<string | null>(null)
   const accessToken = useUserStore((s) => s.accessToken)
   const wsRef = React.useRef<WebSocket | null>(null)
   const reconnectTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -77,21 +78,44 @@ export function useKBDocuments(knowledgeBaseId: string) {
       // so without this merge the WS-triggered refetch would churn references
       // downstream and cause the active doc viewer to remount.
       setDocuments((prev) => mergePreservingIdentity(prev, data))
+      setLoadError(null)
     } catch (err) {
       console.error('Failed to load documents:', err)
+      setLoadError(err instanceof Error ? err.message : 'Failed to load documents')
     }
   }, [knowledgeBaseId, accessToken])
 
-  // Initial load — always use the API
+  // Reset the blocking load state only when the selected wiki changes. Token
+  // refreshes are common when a background tab becomes active again; treating
+  // those as an initial load blanks the current wiki while the same documents
+  // are fetched again.
   React.useEffect(() => {
     if (!knowledgeBaseId) {
       setDocuments([])
       setLoading(false)
       return
     }
+
+    setDocuments([])
+    setLoadError(null)
     setLoading(true)
-    fetchDocs().finally(() => setLoading(false))
-  }, [knowledgeBaseId, fetchDocs])
+  }, [knowledgeBaseId])
+
+  // Fetch on first load and whenever credentials rotate. Credential-driven
+  // fetches deliberately leave `loading` unchanged so the existing wiki stays
+  // visible while it is revalidated in the background.
+  React.useEffect(() => {
+    if (!knowledgeBaseId || !accessToken) return
+
+    let cancelled = false
+    fetchDocs().finally(() => {
+      if (!cancelled) setLoading(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [knowledgeBaseId, accessToken, fetchDocs])
 
   // Real-time updates: WebSocket (hosted) or polling (local)
   React.useEffect(() => {
@@ -173,5 +197,5 @@ export function useKBDocuments(knowledgeBaseId: string) {
     fetchDocs()
   }, [fetchDocs])
 
-  return { documents, setDocuments, loading, refetchDocuments }
+  return { documents, setDocuments, loading, loadError, refetchDocuments }
 }

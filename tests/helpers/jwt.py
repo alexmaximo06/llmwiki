@@ -2,12 +2,12 @@
 
 import os
 import time
+from uuid import UUID
 
 import jwt as pyjwt
-from jwt import PyJWK
-from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
-from uuid import UUID
+from cryptography.hazmat.primitives.asymmetric import ec
+from jwt import PyJWK
 
 _private_key = ec.generate_private_key(ec.SECP256R1())
 _public_key = _private_key.public_key()

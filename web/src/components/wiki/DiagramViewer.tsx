@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { createPortal } from 'react-dom'
 import { X, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 
@@ -88,13 +89,31 @@ export function DiagramViewer({ content, type, alt, onClose }: DiagramViewerProp
     return () => window.removeEventListener('keydown', handleKey)
   }, [onClose])
 
+  const overlayRef = React.useRef<HTMLDivElement>(null)
+
+  React.useEffect(() => {
+    const opener = document.activeElement
+    overlayRef.current?.focus()
+    return () => {
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus()
+    }
+  }, [])
+
   const srcdoc = React.useMemo(
     () => buildSrcdoc(content, type, diagramTheme, alt),
     [content, type, diagramTheme, alt],
   )
 
-  return (
-    <div className="fixed inset-0 z-50 bg-background/90 backdrop-blur-sm flex flex-col">
+  // Portaled so a transformed/animated ancestor can never contain the overlay.
+  return createPortal(
+    <div
+      ref={overlayRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={alt || 'Diagram viewer'}
+      tabIndex={-1}
+      className="fixed inset-0 z-50 bg-background/90 backdrop-blur-sm flex flex-col outline-none"
+    >
       {/* Controls */}
       <div className="shrink-0 flex items-center justify-between px-4 h-10">
         <div className="flex items-center gap-1 text-xs text-muted-foreground">
@@ -137,7 +156,8 @@ export function DiagramViewer({ content, type, alt, onClose }: DiagramViewerProp
           />
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
@@ -160,8 +180,9 @@ export function ExpandableMedia({
         {children}
         <button
           onClick={(e) => { e.stopPropagation(); setFullscreen(true) }}
-          className="absolute top-2 right-2 p-1.5 rounded-md bg-background/80 border border-border text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+          className="absolute top-2 right-2 p-1.5 rounded-md bg-background/80 border border-border text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity cursor-pointer"
           title="View fullscreen"
+          aria-label="View fullscreen"
         >
           <Maximize2 className="size-3.5" />
         </button>

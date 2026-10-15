@@ -26,7 +26,8 @@ export function useKBEvents(
   enabled: boolean,
   refreshKey: string,
 ) {
-  const accessToken = useUserStore((state) => state.accessToken)
+  // Token rotation must not reset the feed; callbacks read the current token at call time.
+  const hasToken = useUserStore((state) => Boolean(state.accessToken))
   const [events, setEvents] = React.useState<KnowledgeBaseEvent[]>([])
   const [nextCursor, setNextCursor] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(enabled)
@@ -43,6 +44,7 @@ export function useKBEvents(
   }, [knowledgeBaseId])
 
   const fetchInitial = React.useCallback(async (signal?: AbortSignal) => {
+    const accessToken = useUserStore.getState().accessToken
     if (!enabled || !knowledgeBaseId || !accessToken) return
     setError(null)
     try {
@@ -57,13 +59,13 @@ export function useKBEvents(
     } finally {
       if (!signal?.aborted) setLoading(false)
     }
-  }, [accessToken, enabled, endpoint, knowledgeBaseId])
+  }, [enabled, endpoint, knowledgeBaseId])
 
   React.useEffect(() => {
     refreshKeyRef.current = refreshKey
     initializedRef.current = false
     loadedMoreRef.current = false
-    if (!enabled || !knowledgeBaseId || !accessToken) {
+    if (!enabled || !knowledgeBaseId || !hasToken) {
       setEvents([])
       setNextCursor(null)
       setLoading(false)
@@ -77,9 +79,10 @@ export function useKBEvents(
     setLoading(true)
     fetchInitial(controller.signal)
     return () => controller.abort()
-  }, [accessToken, enabled, fetchInitial, knowledgeBaseId])
+  }, [hasToken, enabled, fetchInitial, knowledgeBaseId])
 
   const refreshNewest = React.useCallback(async () => {
+    const accessToken = useUserStore.getState().accessToken
     if (!enabled || !knowledgeBaseId || !accessToken || !initializedRef.current) return
     try {
       const page = await apiFetch<KnowledgeBaseEventsPage>(endpoint(), accessToken)
@@ -89,7 +92,7 @@ export function useKBEvents(
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to refresh recent changes')
     }
-  }, [accessToken, enabled, endpoint, knowledgeBaseId])
+  }, [enabled, endpoint, knowledgeBaseId])
 
   React.useEffect(() => {
     if (refreshKeyRef.current === refreshKey) return
@@ -98,6 +101,7 @@ export function useKBEvents(
   }, [refreshKey, refreshNewest])
 
   const loadMore = React.useCallback(async () => {
+    const accessToken = useUserStore.getState().accessToken
     if (!nextCursor || loadingMore || !accessToken) return
     setLoadingMore(true)
     setError(null)
@@ -111,7 +115,7 @@ export function useKBEvents(
     } finally {
       setLoadingMore(false)
     }
-  }, [accessToken, endpoint, loadingMore, nextCursor])
+  }, [endpoint, loadingMore, nextCursor])
 
   return {
     events,

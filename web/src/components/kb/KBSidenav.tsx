@@ -12,25 +12,17 @@ import {
   CommandDialog, CommandInput, CommandList, CommandItem,
   CommandEmpty, CommandGroup, CommandSeparator,
 } from '@/components/ui/command'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { WikiSelector } from '@/components/kb/WikiSelector'
 import { SidenavUserMenu } from '@/components/kb/SidenavUserMenu'
 import { openMcpConnectionDock } from '@/components/connections/McpConnectionDock'
-import { apiFetch } from '@/lib/api'
-import { useUserStore } from '@/stores'
 import type { DocumentListItem, WikiNode } from '@/lib/types'
-
-interface Usage {
-  total_pages: number
-  total_storage_bytes: number
-  document_count: number
-  max_pages: number
-  max_storage_bytes: number
-}
 
 const SIDENAV_COLLAPSED_KEY = 'kb-sidenav-collapsed'
 const isLocal = process.env.NEXT_PUBLIC_MODE === 'local'
+
+// Restores the collapsed state before first paint (no expanded-rail flash) without SSR warnings.
+const useIsomorphicLayoutEffect = typeof window === 'undefined' ? React.useEffect : React.useLayoutEffect
 
 // Only normalize all-lowercase names (file slugs); preserve intentional casing like "GRPO" or "LoRA".
 function toDisplayTitle(title: string): string {
@@ -64,7 +56,7 @@ interface KBSidenavProps {
   loading: boolean
   onUpload: () => void
   filesViewActive: boolean
-  onFilesToggle: () => void
+  onOpenFiles: () => void
   graphViewActive: boolean
   onGraphToggle: () => void
   onOpenSourceDoc: (docId: string) => void
@@ -86,7 +78,7 @@ export function KBSidenav({
   loading,
   onUpload,
   filesViewActive,
-  onFilesToggle,
+  onOpenFiles,
   graphViewActive,
   onGraphToggle,
   onOpenSourceDoc,
@@ -97,9 +89,17 @@ export function KBSidenav({
   courseProgress,
 }: KBSidenavProps) {
   const [searchOpen, setSearchOpen] = React.useState(false)
+  const searchTriggerRef = React.useRef<HTMLButtonElement>(null)
+  const collapsedSearchRef = React.useRef<HTMLButtonElement>(null)
+
+  const restoreSearchFocus = React.useCallback((event: Event) => {
+    event.preventDefault()
+    const target = searchTriggerRef.current ?? collapsedSearchRef.current
+    target?.focus()
+  }, [])
   const [collapsed, setCollapsed] = React.useState(false)
 
-  React.useEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     setCollapsed(localStorage.getItem(SIDENAV_COLLAPSED_KEY) === '1')
   }, [])
 
@@ -164,7 +164,7 @@ export function KBSidenav({
   return (
     <div
       className={cn(
-        'h-full flex flex-col border-r border-border overflow-hidden transition-[width] duration-200',
+        'h-full flex flex-col bg-sidebar border-r border-sidebar-border overflow-hidden transition-[width] duration-200',
         collapsed ? 'w-12' : 'w-[272px]',
       )}
     >
@@ -173,14 +173,15 @@ export function KBSidenav({
           <button
             onClick={toggleCollapsed}
             title="Expand sidebar"
-            className="flex items-center justify-center size-8 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-accent transition-colors cursor-pointer"
+            className="flex items-center justify-center size-8 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-sidebar-accent transition-colors cursor-pointer"
           >
             <PanelLeftOpen className="size-3.5" />
           </button>
           <button
+            ref={collapsedSearchRef}
             onClick={() => setSearchOpen(true)}
             title="Search"
-            className="flex items-center justify-center size-8 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-accent transition-colors cursor-pointer"
+            className="flex items-center justify-center size-8 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-sidebar-accent transition-colors cursor-pointer"
           >
             <SearchIcon className="size-3.5" />
           </button>
@@ -192,8 +193,8 @@ export function KBSidenav({
               className={cn(
                 'flex size-8 cursor-pointer items-center justify-center rounded-md transition-colors',
                 recentActive
-                  ? 'bg-accent text-foreground'
-                  : 'text-muted-foreground/50 hover:bg-accent hover:text-muted-foreground',
+                  ? 'bg-sidebar-accent text-foreground'
+                  : 'text-muted-foreground/50 hover:bg-sidebar-accent hover:text-muted-foreground',
               )}
             >
               <History className="size-3.5" />
@@ -207,8 +208,8 @@ export function KBSidenav({
                 className={cn(
                   'flex items-center justify-center size-8 rounded-md transition-colors cursor-pointer',
                   graphViewActive
-                    ? 'bg-accent text-foreground'
-                    : 'text-muted-foreground/50 hover:text-muted-foreground hover:bg-accent',
+                    ? 'bg-sidebar-accent text-foreground'
+                    : 'text-muted-foreground/50 hover:text-muted-foreground hover:bg-sidebar-accent',
                 )}
               >
                 <Network className="size-3.5" />
@@ -216,7 +217,7 @@ export function KBSidenav({
               <button
                 onClick={onUpload}
                 title="Upload files"
-                className="flex items-center justify-center size-8 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-accent transition-colors cursor-pointer"
+                className="flex items-center justify-center size-8 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-sidebar-accent transition-colors cursor-pointer"
               >
                 <Upload className="size-3.5" />
               </button>
@@ -235,7 +236,7 @@ export function KBSidenav({
             <button
               onClick={toggleCollapsed}
               title="Collapse sidebar"
-              className="flex items-center justify-center size-7 shrink-0 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-accent transition-colors cursor-pointer"
+              className="flex items-center justify-center size-7 shrink-0 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-sidebar-accent transition-colors cursor-pointer"
             >
               <PanelLeftClose className="size-3.5" />
             </button>
@@ -261,9 +262,10 @@ export function KBSidenav({
       {!collapsed && (
       <div className="shrink-0 px-2 pb-1 flex items-center gap-1.5">
         <button
+          ref={searchTriggerRef}
           onClick={() => setSearchOpen(true)}
           aria-label="Search pages and sources"
-          className="flex items-center gap-2 flex-1 px-2.5 h-8 text-xs text-muted-foreground/50 hover:text-muted-foreground border border-border hover:bg-accent rounded-md transition-colors cursor-pointer"
+          className="flex items-center gap-2 flex-1 px-2.5 h-8 text-xs text-muted-foreground/50 hover:text-muted-foreground border border-border hover:bg-sidebar-accent rounded-md transition-colors cursor-pointer"
         >
           <SearchIcon className="size-3" />
           <span className="flex-1 text-left">Search</span>
@@ -275,8 +277,8 @@ export function KBSidenav({
             className={cn(
               'flex items-center justify-center size-8 shrink-0 border rounded-md transition-colors cursor-pointer',
               graphViewActive
-                ? 'bg-accent text-foreground border-border'
-                : 'text-muted-foreground/50 hover:text-muted-foreground border-border hover:bg-accent',
+                ? 'bg-sidebar-accent text-foreground border-border'
+                : 'text-muted-foreground/50 hover:text-muted-foreground border-border hover:bg-sidebar-accent',
             )}
             title="Knowledge graph"
           >
@@ -287,7 +289,7 @@ export function KBSidenav({
       )}
 
       {/* Search palette */}
-      <CommandDialog open={searchOpen} onOpenChange={setSearchOpen}>
+      <CommandDialog open={searchOpen} onOpenChange={setSearchOpen} onCloseAutoFocus={restoreSearchFocus}>
         <CommandInput placeholder="Jump to page, source, or action..." aria-label="Search pages and sources" />
         <CommandList>
           <CommandEmpty>No results found.</CommandEmpty>
@@ -359,7 +361,7 @@ export function KBSidenav({
                 Connect AI
               </CommandItem>
             )}
-            <CommandItem onSelect={() => { setSearchOpen(false); onFilesToggle() }}>
+            <CommandItem onSelect={() => { setSearchOpen(false); onOpenFiles() }}>
               <Folder className="size-3.5 mr-2 opacity-50" />
               Browse files
             </CommandItem>
@@ -380,8 +382,8 @@ export function KBSidenav({
             className={cn(
               'flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors',
               recentActive
-                ? 'bg-accent font-medium text-foreground'
-                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                ? 'bg-sidebar-accent font-medium text-foreground'
+                : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
             )}
           >
             <History className="size-3 shrink-0 opacity-60" />
@@ -450,12 +452,12 @@ export function KBSidenav({
       <div className="shrink-0 px-2 pb-1">
         <div className="flex items-center gap-1">
           <button
-            onClick={onFilesToggle}
+            onClick={onOpenFiles}
             className={cn(
               'flex items-center gap-2 flex-1 min-w-0 px-2.5 py-2 text-[13px] rounded-md transition-colors cursor-pointer',
               filesViewActive
-                ? 'bg-accent text-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                ? 'bg-sidebar-accent text-foreground font-medium'
+                : 'text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/60',
             )}
           >
             <Library className="size-3.5" />
@@ -468,7 +470,7 @@ export function KBSidenav({
             <button
               onClick={onUpload}
               title="Upload files"
-              className="flex items-center justify-center size-7 shrink-0 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-accent transition-colors cursor-pointer"
+              className="flex items-center justify-center size-7 shrink-0 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-sidebar-accent transition-colors cursor-pointer"
             >
               <Upload className="size-3.5" />
             </button>
@@ -493,7 +495,7 @@ function SidenavSkeleton({ lines }: { lines: number }) {
         <div
           key={i}
           className="h-5 rounded-md bg-muted/50 animate-pulse"
-          style={{ width: `${60 + Math.random() * 30}%` }}
+          style={{ width: `${60 + ((i * 13) % 3) * 10}%` }}
         />
       ))}
     </div>
@@ -553,7 +555,7 @@ function WikiLeaf({
         'flex items-center gap-2.5 w-full text-left text-[13px] rounded-md px-2 py-1.5 transition-colors cursor-pointer',
         locked
           ? 'text-muted-foreground/40 hover:text-muted-foreground'
-          : isActive ? 'bg-accent text-foreground font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+          : isActive ? 'bg-sidebar-accent text-foreground font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/60',
       )}
     >
       {courseMode
@@ -587,11 +589,11 @@ function WikiSectionItem({
         'relative block w-full text-left text-[13px] rounded-md pl-8 pr-2 py-1.5 truncate transition-colors cursor-pointer',
         locked
           ? 'text-muted-foreground/40 hover:text-muted-foreground'
-          : isActive ? 'bg-accent text-foreground font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+          : isActive ? 'bg-sidebar-accent text-foreground font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/60',
       )}
     >
       {courseMode && (
-        <span className="absolute left-[7px] top-1/2 -translate-y-1/2 grid place-items-center size-4 rounded-full bg-background">
+        <span className="absolute left-[7px] top-1/2 -translate-y-1/2 grid place-items-center size-4 rounded-full bg-sidebar">
           <CourseGlyph node={node} current={node.path === currentPath || isActive} />
         </span>
       )}
@@ -716,8 +718,8 @@ function WikiTreeNode({
           locked
             ? 'text-muted-foreground/40 hover:text-muted-foreground'
             : isActive
-              ? 'bg-accent text-foreground font-medium'
-              : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+              ? 'bg-sidebar-accent text-foreground font-medium'
+              : 'text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/60',
         )}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
         title={locked ? 'Ahead of your current lesson' : undefined}
@@ -775,81 +777,5 @@ function WikiTreeNode({
         )}
       </AnimatePresence>
     </div>
-  )
-}
-
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`
-  return `${(bytes / 1073741824).toFixed(1)} GB`
-}
-
-function PageUsageBar() {
-  const token = useUserStore((s) => s.accessToken)
-  const [usage, setUsage] = React.useState<Usage | null>(null)
-  const [modalOpen, setModalOpen] = React.useState(false)
-
-  React.useEffect(() => {
-    if (!token) return
-    apiFetch<Usage>('/v1/usage', token)
-      .then(setUsage)
-      .catch(() => {})
-  }, [token])
-
-  if (!usage) return null
-
-  const pct = Math.min(100, (usage.total_storage_bytes / usage.max_storage_bytes) * 100)
-  const color =
-    pct > 90 ? 'bg-destructive' : pct > 70 ? 'bg-yellow-500' : 'bg-primary'
-
-  return (
-    <>
-      <button
-        onClick={() => setModalOpen(true)}
-        className="flex items-center gap-2 w-full px-2 py-1 rounded-md hover:bg-accent transition-colors cursor-pointer group"
-      >
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between mb-0.5">
-            <span className="text-[10px] text-muted-foreground/60 group-hover:text-muted-foreground transition-colors">
-              Storage
-            </span>
-            <span className="text-[10px] font-mono text-muted-foreground/40 group-hover:text-muted-foreground/60 transition-colors">
-              {formatBytes(usage.total_storage_bytes)} / {formatBytes(usage.max_storage_bytes)}
-            </span>
-          </div>
-          <div className="h-1 rounded-full bg-muted overflow-hidden">
-            <div
-              className={cn('h-full rounded-full transition-all', color)}
-              style={{ width: `${pct}%` }}
-            />
-          </div>
-        </div>
-      </button>
-
-      <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Storage Usage</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 text-sm text-muted-foreground">
-            <p>
-              You've used <span className="font-medium text-foreground">{formatBytes(usage.total_storage_bytes)}</span> of
-              your <span className="font-medium text-foreground">{formatBytes(usage.max_storage_bytes)}</span> storage limit.
-            </p>
-            <div className="h-2 rounded-full bg-muted overflow-hidden">
-              <div
-                className={cn('h-full rounded-full transition-all', color)}
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-            <p>
-              Storage is consumed by uploaded files (PDFs, images, office documents). Notes and wiki pages are free and unlimited.
-            </p>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
   )
 }

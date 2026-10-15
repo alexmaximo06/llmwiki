@@ -5,7 +5,6 @@ import re
 import uuid
 from dataclasses import dataclass
 
-
 PDF_IMAGE_MIME = {
     "jpg": "image/jpeg",
     "png": "image/png",

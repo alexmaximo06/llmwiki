@@ -219,7 +219,7 @@ async def test_embed_images_caps_failed_remote_fetch_fanout(monkeypatch):
     async def failed_fetch(url: str, **kwargs):
         nonlocal calls
         calls += 1
-        return None
+        return
 
     monkeypatch.setattr(safe_fetch, "fetch_public_image", failed_fetch)
     monkeypatch.setattr(Parser, "_MAX_EMBED_IMAGES", 3)

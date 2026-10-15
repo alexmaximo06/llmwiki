@@ -4,12 +4,12 @@ Parses wiki page content for footnote citations ([^N]: filename.pdf, p.3)
 and internal links ([text](path.md)), stores edges in document_references.
 """
 
-import re
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
-_CITATION_RE = re.compile(r"\[\^\d+\]:\s*(.+)$", re.MULTILINE)
+_CITATION_RE = re.compile(r"\[\^[^\]]+\]:\s*(.+)$", re.MULTILINE)
 _WIKI_LINK_RE = re.compile(r"(?<!!)\[(?:[^\]]*)\]\(([^)]+)\)")
 
 

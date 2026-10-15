@@ -1,13 +1,13 @@
 def register(mcp, get_user_id, fs_factory) -> None:
-    from .guide import register as register_guide
-    from .list import register as register_list
-    from .search import register as register_search
-    from .read import register as register_read
-    from .write import register as register_write
-    from .delete import register as register_delete
-    from .lint import register as register_lint
-    from .reply import register as register_reply
     from .comments import register as register_comments
+    from .delete import register as register_delete
+    from .guide import register as register_guide
+    from .lint import register as register_lint
+    from .list import register as register_list
+    from .read import register as register_read
+    from .reply import register as register_reply
+    from .search import register as register_search
+    from .write import register as register_write
 
     register_guide(mcp, get_user_id, fs_factory)
     register_list(mcp, get_user_id, fs_factory)

@@ -4,9 +4,9 @@ from contextlib import asynccontextmanager
 import httpx
 import pytest
 from fastapi import Request
-
 from scoped_db import ScopedDB
-from tests.helpers.jwt import auth_headers, seed_jwks_cache
+
+from tests.helpers.jwt import seed_jwks_cache
 
 USER_A_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 USER_A_EMAIL = "alice@test.com"

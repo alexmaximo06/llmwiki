@@ -57,6 +57,7 @@ const HIGHLIGHT_POLL_INTERVAL = 2000
 
 export default function MarkdownClipViewer({ documentId, className }: Props) {
   const token = useUserStore((s) => s.accessToken)
+  const hasToken = Boolean(token)
   const [markdown, setMarkdown] = React.useState<string | null>(null)
   const [highlights, setHighlights] = React.useState<Highlight[] | null>(null)
   const [highlightVersion, setHighlightVersion] = React.useState<number>(0)
@@ -122,10 +123,11 @@ export default function MarkdownClipViewer({ documentId, className }: Props) {
     return () => window.clearTimeout(timeout)
   }, [notice])
 
+  // Keyed on token presence: a token refresh must not reload the document and discard an in-progress edit.
   React.useEffect(() => {
-    if (!isLocal && !token) return
+    if (!isLocal && !hasToken) return
     let cancelled = false
-    const apiToken = token ?? ''
+    const apiToken = useUserStore.getState().accessToken ?? ''
     setError(null)
     setMarkdown(null)
     setHighlights(null)
@@ -166,7 +168,7 @@ export default function MarkdownClipViewer({ documentId, className }: Props) {
     return () => {
       cancelled = true
     }
-  }, [documentId, token])
+  }, [documentId, hasToken])
 
   React.useEffect(() => {
     if (!editor) return

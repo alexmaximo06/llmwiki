@@ -7,7 +7,6 @@ from uuid import UUID
 import pytest
 from fastapi import HTTPException
 
-
 USER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 KB_ID = "11111111-1111-1111-1111-111111111111"
 
@@ -158,6 +157,7 @@ async def test_existing_local_database_gets_honest_idempotent_backfill(tmp_path)
         "DROP TRIGGER document_activity_update;"
         "DROP TRIGGER document_activity_delete;"
         "DROP TABLE knowledge_base_events;"
+        "PRAGMA user_version = 0;"
     )
     await db.close()
 

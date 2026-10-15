@@ -10,13 +10,12 @@ Covers:
 
 from __future__ import annotations
 
-import asyncio
+import contextlib
 import json
 import os
 import tempfile
 
 import pytest
-
 from infra.db.sqlite import SQLiteDocumentRepository, create_pool
 
 
@@ -62,10 +61,8 @@ async def repo():
         yield repo
     finally:
         await db.close()
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(path)
-        except OSError:
-            pass
 
 
 @pytest.mark.asyncio

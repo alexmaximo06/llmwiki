@@ -42,7 +42,7 @@ async def test_create_and_update_track_utf8_file_size(client, pool):
     assert await pool.fetchval(
         "SELECT file_size FROM documents WHERE id = $1",
         doc_id,
-    ) == len("hé".encode("utf-8"))
+    ) == len("hé".encode())
 
     updated = await client.put(
         f"/v1/documents/{doc_id}/content",
@@ -53,7 +53,7 @@ async def test_create_and_update_track_utf8_file_size(client, pool):
     assert await pool.fetchval(
         "SELECT file_size FROM documents WHERE id = $1",
         doc_id,
-    ) == len("éé".encode("utf-8"))
+    ) == len("éé".encode())
 
 
 async def test_create_rejects_storage_quota_without_inserting(client, pool):
@@ -156,3 +156,21 @@ async def test_tus_finalize_reserves_quota_in_real_transaction(pool, tmp_path):
     }
     assert len(s3.uploads) == 1
     assert not temp_path.exists()
+
+
+async def test_editing_extracted_text_keeps_the_binary_source_size(client, pool):
+    doc_id = await pool.fetchval(
+        "INSERT INTO documents (knowledge_base_id, user_id, filename, path, file_type, file_size, status, content) "
+        "VALUES ($1, $2, 'paper.pdf', '/', 'pdf', 900000, 'ready', 'extracted text') RETURNING id::text",
+        KB_ID,
+        USER_ID,
+    )
+
+    response = await client.put(
+        f"/v1/documents/{doc_id}/content",
+        headers=auth_headers(USER_ID),
+        json={"content": "x"},
+    )
+
+    assert response.status_code == 200
+    assert await pool.fetchval("SELECT file_size FROM documents WHERE id = $1", doc_id) == 900000

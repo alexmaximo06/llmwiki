@@ -15,7 +15,7 @@ def parse_frontmatter(content: str) -> dict:
         return {}
     try:
         meta = yaml.safe_load(m.group(1))
-    except Exception:
+    except yaml.YAMLError:
         return {}
     return meta if isinstance(meta, dict) else {}
 

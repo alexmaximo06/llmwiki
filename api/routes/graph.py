@@ -4,9 +4,8 @@ import asyncio
 import time
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
-
 from deps import get_scoped_db
+from fastapi import APIRouter, Depends, HTTPException
 from scoped_db import ScopedDB
 from services.graph import get_graph_hosted, rebuild_hosted
 

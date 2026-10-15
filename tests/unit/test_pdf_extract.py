@@ -86,6 +86,108 @@ class TestElementToMarkdown:
         assert _element_to_markdown({"type": "annotation", "content": "x"}) == ""
 
 
+def _cell(text: str) -> dict:
+    return {"type": "table cell", "kids": [{"type": "paragraph", "content": text}]}
+
+
+def _row(*texts: str) -> dict:
+    return {"type": "table row", "cells": [_cell(t) for t in texts]}
+
+
+class TestTableToMarkdown:
+
+    def test_table_renders_as_markdown_table(self):
+        el = {"type": "table", "rows": [_row("Quarter", "Revenue"), _row("Q1", "1,200")]}
+        assert _element_to_markdown(el) == (
+            "| Quarter | Revenue |\n"
+            "| --- | --- |\n"
+            "| Q1 | 1,200 |"
+        )
+
+    def test_table_with_only_empty_cells_is_skipped(self):
+        el = {"type": "table", "rows": [_row("", ""), _row("", "")]}
+        assert _element_to_markdown(el) == ""
+
+    def test_table_with_no_rows_is_skipped(self):
+        assert _element_to_markdown({"type": "table", "rows": []}) == ""
+
+    def test_ragged_rows_are_padded_to_widest(self):
+        el = {"type": "table", "rows": [_row("a"), _row("b", "c")]}
+        assert _element_to_markdown(el) == (
+            "| a |  |\n"
+            "| --- | --- |\n"
+            "| b | c |"
+        )
+
+    def test_pipes_in_cells_are_escaped(self):
+        el = {"type": "table", "rows": [_row("a|b"), _row("c")]}
+        assert "a\\|b" in _element_to_markdown(el)
+
+    def test_cell_joins_multiple_nested_blocks(self):
+        cell = {
+            "type": "table cell",
+            "kids": [
+                {"type": "paragraph", "content": "Total"},
+                {"type": "paragraph", "content": "2021"},
+            ],
+        }
+        el = {"type": "table", "rows": [{"type": "table row", "cells": [cell]}]}
+        assert _element_to_markdown(el).splitlines()[0] == "| Total 2021 |"
+
+
+class TestTextBlockToMarkdown:
+
+    def test_text_block_renders_nested_blocks(self):
+        el = {
+            "type": "text block",
+            "kids": [
+                {"type": "heading", "heading level": 2, "content": "Part 1"},
+                {"type": "paragraph", "content": "Body text."},
+            ],
+        }
+        assert _element_to_markdown(el) == "## Part 1\n\nBody text."
+
+    def test_nested_text_blocks_are_flattened(self):
+        el = {
+            "type": "text block",
+            "kids": [{
+                "type": "text block",
+                "kids": [{"type": "paragraph", "content": "Deep"}],
+            }],
+        }
+        assert _element_to_markdown(el) == "Deep"
+
+    def test_empty_text_block(self):
+        assert _element_to_markdown({"type": "text block", "kids": []}) == ""
+
+    def test_recursion_is_depth_bounded(self):
+        el: dict = {"type": "paragraph", "content": "bottom"}
+        for _ in range(pdf_extract.MAX_ELEMENT_DEPTH + 5):
+            el = {"type": "text block", "kids": [el]}
+        assert _element_to_markdown(el) == ""
+
+
+class TestTablesAndTextBlocksReachPages:
+
+    def test_table_content_is_stored_on_its_page(self):
+        elements = [
+            {"type": "table", "page number": 1, "rows": [_row("H"), _row("v")]},
+        ]
+        pages = _elements_to_pages(elements, total_pages=1)
+        assert pages[0][1] == "| H |\n| --- |\n| v |"
+
+    def test_text_block_content_is_stored_on_its_page(self):
+        elements = [
+            {
+                "type": "text block",
+                "page number": 1,
+                "kids": [{"type": "paragraph", "content": "Recovered"}],
+            },
+        ]
+        pages = _elements_to_pages(elements, total_pages=1)
+        assert pages[0][1] == "Recovered"
+
+
 class TestElementsToPages:
 
     def test_groups_by_page_number(self):

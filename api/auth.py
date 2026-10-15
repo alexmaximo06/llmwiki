@@ -100,8 +100,8 @@ async def verify_token(token: str) -> str:
 
     try:
         header = jwt.get_unverified_header(token)
-    except jwt.InvalidTokenError:
-        raise ValueError("Invalid token")
+    except jwt.InvalidTokenError as e:
+        raise ValueError("Invalid token") from e
 
     kid = header.get("kid")
     if not isinstance(kid, str) or not kid or len(kid) > _MAX_KID_LENGTH:
@@ -144,7 +144,7 @@ async def verify_token(token: str) -> str:
         )
     except jwt.InvalidTokenError as e:
         logger.debug("JWT verification failed: %s", e)
-        raise ValueError("Invalid token")
+        raise ValueError("Invalid token") from e
 
     user_id = payload.get("sub")
     if not user_id:
@@ -161,5 +161,5 @@ async def get_current_user(request: Request) -> str:
     token = auth_header.removeprefix("Bearer ").strip()
     try:
         return await verify_token(token)
-    except ValueError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail="Invalid token") from e

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
+import shutil
 import uuid
 from pathlib import Path
 
 from config import settings
+from domain.file_types import SIMPLE_TEXT_TYPES
 from domain.watcher import mark_written
 from fastapi import HTTPException
 from infra.db.sqlite import SQLiteChunkRepository, SQLiteDocumentRepository, serialized_write
@@ -79,7 +82,7 @@ class LocalKBService(KBService):
         )
         rows = await cursor.fetchall()
         cols = [d[0] for d in cursor.description]
-        return [dict(zip(cols, r)) for r in rows]
+        return [dict(zip(cols, r, strict=False)) for r in rows]
 
     async def get(self, kb_id: str) -> dict | None:
         kbs = await self.list()
@@ -141,6 +144,24 @@ def _safe_resolve(relative: str) -> Path:
     if not resolved.is_relative_to(ws):
         raise HTTPException(status_code=400, detail="Path escapes workspace")
     return resolved
+
+
+def _normalize_dir(path: str) -> str:
+    """Canonical '/a/b/' directory form, so DB paths always match disk paths."""
+    parts = [part for part in path.split("/") if part]
+    if any(part in (".", "..") for part in parts):
+        raise HTTPException(status_code=400, detail="Path segments '.' and '..' are not allowed")
+    return "/" + "/".join(parts) + "/" if parts else "/"
+
+
+def _resolve_writable(dir_path: str, filename: str) -> tuple[str, Path]:
+    """Resolve a normalized dir + filename to (relative_path, disk path), refusing hidden targets like .llmwiki/."""
+    if not filename or "/" in filename or "\\" in filename or filename in (".", ".."):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    relative = (dir_path + filename).lstrip("/")
+    if any(part.startswith(".") for part in relative.split("/")):
+        raise HTTPException(status_code=400, detail="Hidden files and folders are not writable")
+    return relative, _safe_resolve(relative)
 
 
 def _doc_to_disk_path(doc: dict) -> Path | None:
@@ -210,9 +231,44 @@ def _write_bytes_file(path: Path, content: bytes) -> None:
     path.write_bytes(content)
 
 
+def _create_text_file(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("x", encoding="utf-8") as f:
+        f.write(content)
+
+
 def _move_file(old_path: Path, new_path: Path) -> None:
+    """Move a file without ever replacing an existing destination (raises FileExistsError)."""
     new_path.parent.mkdir(parents=True, exist_ok=True)
-    old_path.rename(new_path)
+    if new_path.exists() and new_path.samefile(old_path):
+        old_path.rename(new_path)  # case-only rename on a case-insensitive filesystem
+        return
+    _place_without_replacing(old_path, new_path)
+    try:
+        old_path.unlink()
+    except BaseException:
+        new_path.unlink(missing_ok=True)
+        raise
+
+
+def _place_without_replacing(old_path: Path, new_path: Path) -> None:
+    """Create new_path from old_path atomically refusing an existing target: hard link, else exclusive copy."""
+    try:
+        os.link(old_path, new_path)
+        return
+    except FileExistsError:
+        raise
+    except OSError:
+        pass  # filesystem without hard links (FAT/exFAT, some SMB/FUSE mounts)
+    with old_path.open("rb") as source:
+        target = new_path.open("xb")
+        try:
+            with target:
+                shutil.copyfileobj(source, target)
+            shutil.copystat(old_path, new_path)
+        except BaseException:
+            new_path.unlink(missing_ok=True)
+            raise
 
 
 def _unlink_file(path: Path) -> None:
@@ -263,16 +319,23 @@ class LocalDocumentService(DocumentService):
         title = meta.get("title", "").strip() or title_from_filename(filename)
         tags = extract_tags(meta)
 
+        path = _normalize_dir(path)
+        _, file_path = _resolve_writable(path, filename)
         existing = await self.doc_repo.find_by_path(kb_id, self.user_id, filename, path)
-        if existing:
+        if existing or file_path.exists():
             raise HTTPException(status_code=409, detail=f"'{filename}' already exists at {path}")
 
-        relative = (path.rstrip("/") + "/" + filename).lstrip("/")
-        file_path = _safe_resolve(relative)
         mark_written(str(file_path))
-        await asyncio.to_thread(_write_text_file, file_path, content or "")
+        try:
+            await asyncio.to_thread(_create_text_file, file_path, content or "")
+        except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=f"'{filename}' already exists at {path}") from e
 
-        row = await self.doc_repo.create_note(kb_id, self.user_id, filename, path, title, content, tags)
+        try:
+            row = await self.doc_repo.create_note(kb_id, self.user_id, filename, path, title, content, tags)
+        except BaseException:
+            await asyncio.to_thread(_unlink_file, file_path)
+            raise
 
         if content:
             chunks = await asyncio.to_thread(chunk_text, content)
@@ -467,7 +530,7 @@ class LocalDocumentService(DocumentService):
         if not doc:
             return None
 
-        file_path = _doc_to_disk_path(doc)
+        file_path = _doc_to_disk_path(doc) if doc["file_type"] in SIMPLE_TEXT_TYPES else None
         if file_path:
             mark_written(str(file_path))
             await asyncio.to_thread(_write_text_file, file_path, content)
@@ -478,6 +541,7 @@ class LocalDocumentService(DocumentService):
         if kb_id:
             chunks = await asyncio.to_thread(chunk_text, content) if content else []
             await self.chunk_repo.store(doc_id, self.user_id, kb_id, chunks)
+            await self.doc_repo.reapply_highlights(doc_id)
 
         return row
 
@@ -494,19 +558,26 @@ class LocalDocumentService(DocumentService):
 
         old_path = _doc_to_disk_path(doc)
         needs_move = "filename" in fields or "path" in fields
+        if not (needs_move and old_path and old_path.is_file()):
+            return await self.doc_repo.update_metadata(doc_id, self.user_id, **fields)
 
-        if needs_move and old_path and old_path.is_file():
-            new_filename = fields.get("filename", doc["filename"])
-            new_dir = fields.get("path", doc["path"])
-            new_relative = (new_dir.rstrip("/") + "/" + new_filename).lstrip("/")
-            new_path = _safe_resolve(new_relative)
-            mark_written(str(old_path))
-            mark_written(str(new_path))
+        new_dir = _normalize_dir(fields.get("path", doc["path"]))
+        new_filename = fields.get("filename", doc["filename"])
+        new_relative, new_path = _resolve_writable(new_dir, new_filename)
+        mark_written(str(old_path))
+        mark_written(str(new_path))
+        try:
             await asyncio.to_thread(_move_file, old_path, new_path)
-            fields["relative_path"] = new_relative
-            fields["source_kind"] = "wiki" if new_dir.strip("/").startswith("wiki") else "source"
-
-        return await self.doc_repo.update_metadata(doc_id, self.user_id, **fields)
+        except FileExistsError as e:
+            raise HTTPException(status_code=409, detail=f"'{new_filename}' already exists at {new_dir}") from e
+        fields["path"] = new_dir
+        fields["relative_path"] = new_relative
+        fields["source_kind"] = "wiki" if new_dir.startswith("/wiki/") else "source"
+        try:
+            return await self.doc_repo.update_metadata(doc_id, self.user_id, **fields)
+        except BaseException:
+            await asyncio.to_thread(_move_file, new_path, old_path)
+            raise
 
     async def delete(self, doc_id: str) -> bool:
         doc = await self.doc_repo.get(doc_id)

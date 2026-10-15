@@ -45,9 +45,8 @@ def _host_name(value: str) -> str | None:
             return None
         port = port if separator else None
 
-    if port is not None:
-        if len(port) > 5 or not (0 < int(port) <= 65535):
-            return None
+    if port is not None and (len(port) > 5 or not (0 < int(port) <= 65535)):
+        return None
     return hostname or None
 
 

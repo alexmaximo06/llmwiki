@@ -1,8 +1,8 @@
 """Knowledge base tools — create and enumerate knowledge bases."""
 
-from mcp.server.fastmcp import FastMCP, Context
-
 from config import settings
+
+from mcp.server.fastmcp import Context, FastMCP
 
 
 def register(mcp: FastMCP, get_user_id, fs_factory) -> None:

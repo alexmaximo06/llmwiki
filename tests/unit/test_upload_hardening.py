@@ -180,3 +180,11 @@ async def test_s3_download_file_streams_to_disk(monkeypatch, tmp_path):
     assert calls == [
         ("test-bucket", "user/doc/source.bin", str(destination)),
     ]
+
+
+def test_legacy_xls_is_rejected_at_upload_instead_of_failing_in_extraction():
+    from domain.file_types import SPREADSHEET_TYPES
+    from infra import tus
+
+    assert ".xls" not in tus.ALLOWED_EXTENSIONS
+    assert "xls" not in SPREADSHEET_TYPES

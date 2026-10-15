@@ -1,6 +1,6 @@
 """Unit tests for the text chunker."""
 
-from services.chunker import chunk_text, chunk_pages, _estimate_tokens, CHUNK_SIZE
+from services.chunker import _estimate_tokens, chunk_pages, chunk_text
 
 
 class TestChunkText:
@@ -18,8 +18,23 @@ class TestChunkText:
         assert chunks[0].index == 0
         assert chunks[0].page is None
 
-    def test_very_short_text_below_minimum_is_dropped(self):
-        assert chunk_text("hi") == []
+    def test_very_short_text_is_still_searchable(self):
+        chunks = chunk_text("# Q3 Revenue\n\n- Up 20% YoY")
+        assert [c.content for c in chunks] == ["# Q3 Revenue\n\n- Up 20% YoY"]
+
+    def test_short_trailing_block_is_kept(self):
+        text = ("Long paragraph text. " * 120) + "\n\nContact: alice@example.com"
+        assert "alice@example.com" in chunk_text(text)[-1].content
+
+    def test_short_leading_block_merges_into_next_chunk(self):
+        text = "Intro.\n\n" + ("Word " * 3000)
+        assert chunk_text(text)[0].content.startswith("Intro.")
+
+    def test_breadcrumb_names_the_section_the_chunk_came_from(self):
+        text = "# Alpha\n\n" + ("alpha text " * 400) + "\n\n# Beta\n\n" + ("beta text " * 50)
+        chunks = chunk_text(text)
+        assert chunks[0].header_breadcrumb == "Alpha"
+        assert chunks[-1].header_breadcrumb == "Beta"
 
     def test_long_text_produces_multiple_chunks(self):
         para = "Word " * 300

@@ -10,12 +10,15 @@ import { useKBDocuments } from '@/hooks/useKBDocuments'
 import { apiFetch } from '@/lib/api'
 import { refreshAccessToken } from '@/lib/auth-token'
 import { toast } from 'sonner'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { KBSidenav } from '@/components/kb/KBSidenav'
 import { openMcpConnectionDock } from '@/components/connections/McpConnectionDock'
 import { SelectionActionBar } from '@/components/kb/SelectionActionBar'
 import { WikiContent } from '@/components/wiki/WikiContent'
 import type { DocumentListItem, WikiNode } from '@/lib/types'
 import type { ViewMode } from '@/components/kb/viewMode'
+import { resolveWikiHref } from '@/lib/wikiTree'
+import { DocumentsLoadError } from '@/components/kb/DocumentsLoadError'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const isLocal = process.env.NEXT_PUBLIC_MODE === 'local'
@@ -135,7 +138,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
   const searchParams = useSearchParams()
   const token = useUserStore((s) => s.accessToken)
   const userId = useUserStore((s) => s.user?.id)
-  const { documents, setDocuments, loading } = useKBDocuments(kbId)
+  const { documents, setDocuments, loading, loadError, refetchDocuments } = useKBDocuments(kbId)
 
   // ─── Upload tracking (global progress panel) ─────────────────
   const addUpload = useUploadStore((s) => s.addUpload)
@@ -390,12 +393,23 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [selectedIds.size, clearSelection])
 
+  const [confirmingBulkDelete, setConfirmingBulkDelete] = React.useState(false)
+  const [bulkDeleting, setBulkDeleting] = React.useState(false)
+  const rootRef = React.useRef<HTMLDivElement>(null)
+
+  const restoreFocusToRoot = React.useCallback((event: Event) => {
+    event.preventDefault()
+    rootRef.current?.focus()
+  }, [])
+
   const handleDeleteSelected = async () => {
     const t = getToken()
     if (!t) return
     const ids = Array.from(selectedIds)
-    if (!window.confirm(`Delete ${ids.length} selected document${ids.length > 1 ? 's' : ''}?`)) return
+    setBulkDeleting(true)
     const results = await Promise.allSettled(ids.map((id) => apiFetch(`/v1/documents/${id}`, t, { method: 'DELETE' })))
+    setBulkDeleting(false)
+    setConfirmingBulkDelete(false)
     const succeeded = ids.filter((_, i) => results[i].status === 'fulfilled')
     const failed = ids.filter((_, i) => results[i].status === 'rejected')
     if (succeeded.length > 0) setDocuments((prev) => prev.filter((d) => !succeeded.includes(d.id)))
@@ -405,7 +419,6 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
 
   // ─── Navigation handlers ─────────────────────────────────────
 
-  // Wiki page click: only updates ?p= search param (instant, no route change)
   const handleWikiSelect = React.useCallback((path: string, docNumber?: number | null) => {
     setActiveView('wiki')
     setWikiActivePath(path)
@@ -414,27 +427,20 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
       return relative === path
     })?.document_number ?? null
     lastWikiDocNumberRef.current = num
-    if (num != null) updateParam('p', String(num))
-  }, [updateParam, wikiDocs])
-
-  const handleFilesToggle = React.useCallback(() => {
-    if (activeView === 'doc') {
-      // Doc is open — close it, go to root file browser
-      setActiveSourceDocId(null)
-      setActiveView('files')
-      navigateToView('files')
-    } else if (activeView === 'files') {
-      // Already browsing files — toggle back to wiki
-      const sp = lastWikiDocNumberRef.current != null
-        ? { p: String(lastWikiDocNumberRef.current) }
-        : undefined
-      setActiveView('wiki')
-      navigateToView('wiki', { searchParams: sp })
+    // On the wiki route a page switch is just a ?p= replace; from /files or
+    // /graph the pathname must change too, or reload restores the wrong view.
+    if (window.location.pathname === `/wikis/${kbSlug}`) {
+      if (num != null) updateParam('p', String(num))
     } else {
-      // From wiki/graph — switch to files
-      setActiveView('files')
-      navigateToView('files')
+      navigateToView('wiki', num != null ? { searchParams: { p: String(num) } } : undefined)
     }
+  }, [updateParam, navigateToView, kbSlug, wikiDocs])
+
+  const handleOpenFiles = React.useCallback(() => {
+    if (activeView === 'files') return
+    if (activeView === 'doc') setActiveSourceDocId(null)
+    setActiveView('files')
+    navigateToView('files')
   }, [activeView, navigateToView])
 
   const handleGraphToggle = React.useCallback(() => {
@@ -510,25 +516,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
 
   const handleWikiNavigate = React.useCallback(
     (path: string) => {
-      let nextPath = path
-      if (path.startsWith('/wiki/')) {
-        nextPath = path.replace(/^\/wiki\/?/, '')
-      } else if (path.startsWith('/')) {
-        nextPath = path.slice(1)
-      } else if (wikiPathSet.has(path)) {
-        nextPath = path
-      } else if (wikiActivePath) {
-        const dir = wikiActivePath.includes('/')
-          ? wikiActivePath.substring(0, wikiActivePath.lastIndexOf('/'))
-          : ''
-        let resolved = path.startsWith('./')
-          ? (dir ? dir + '/' : '') + path.slice(2)
-          : (dir ? dir + '/' : '') + path
-        while (resolved.includes('../')) {
-          resolved = resolved.replace(/[^/]*\/\.\.\//, '')
-        }
-        nextPath = resolved
-      }
+      const nextPath = resolveWikiHref(path, wikiActivePath, wikiPathSet)
       setWikiActivePath(nextPath)
       const doc = wikiDocs.find((d) => {
         const relative = (d.path + d.filename).replace(/^\/wiki\/?/, '')
@@ -611,7 +599,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
     uploadPathRef.current = targetPath
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = '.md,.txt,.pdf,.pptx,.ppt,.docx,.doc,.png,.jpg,.jpeg,.webp,.gif,.svg,.xlsx,.xls,.csv,.html,.htm'
+    input.accept = '.md,.txt,.pdf,.pptx,.ppt,.docx,.doc,.png,.jpg,.jpeg,.webp,.gif,.svg,.xlsx,.csv,.html,.htm'
     input.multiple = true
     input.onchange = () => { if (input.files) uploadFiles(Array.from(input.files), uploadPathRef.current) }
     input.click()
@@ -675,7 +663,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
           setDocuments((prev) => [data, ...prev])
         } catch { toast.error(`Failed to import ${file.name}`) }
       } else {
-        const supportedTypes = new Set(['pdf', 'pptx', 'ppt', 'docx', 'doc', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'xlsx', 'xls', 'csv', 'html', 'htm'])
+        const supportedTypes = new Set(['pdf', 'pptx', 'ppt', 'docx', 'doc', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'xlsx', 'csv', 'html', 'htm'])
         if (ext && supportedTypes.has(ext)) {
           if (process.env.NEXT_PUBLIC_MODE === 'local') {
             const uploadId = crypto.randomUUID()
@@ -694,7 +682,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
             await tusUploadFile(file, targetPath)
           }
         } else {
-          toast.info(`${ext} files not yet supported`)
+          toast.info(ext === 'xls' ? 'Legacy .xls files aren\'t supported. Save as .xlsx and upload again.' : `${ext ? `.${ext}` : 'Extensionless'} files not yet supported`)
         }
       }
     })
@@ -789,7 +777,9 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
   // ─── Render ──────────────────────────────────────────────────
   return (
     <div
-      className="flex flex-col h-full relative"
+      ref={rootRef}
+      tabIndex={-1}
+      className="flex flex-col h-full relative outline-none"
       onDragEnter={handleFileDragEnter}
       onDragLeave={handleFileDragLeave}
       onDragOver={handleFileDragOver}
@@ -826,7 +816,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
             loading={loading}
             onUpload={() => handleUploadClick()}
             filesViewActive={filesViewActive}
-            onFilesToggle={handleFilesToggle}
+            onOpenFiles={handleOpenFiles}
             graphViewActive={graphViewActive}
             onGraphToggle={handleGraphToggle}
             onOpenSourceDoc={handleOpenSourceDoc}
@@ -836,7 +826,9 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
         </div>
         <div className="flex-1 min-w-0">
           <AnimatePresence mode="wait">
-            {showMainLoading ? (
+            {loadError && documents.length === 0 ? (
+              <DocumentsLoadError key="load-error" onRetry={refetchDocuments} />
+            ) : showMainLoading ? (
               <motion.div
                 key="loading"
                 initial={{ opacity: 0 }}
@@ -973,8 +965,21 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
 
       <SelectionActionBar
         count={selectedIds.size}
-        onDelete={handleDeleteSelected}
+        onDelete={() => setConfirmingBulkDelete(true)}
         onClear={clearSelection}
+      />
+
+      <ConfirmDialog
+        open={confirmingBulkDelete}
+        onOpenChange={setConfirmingBulkDelete}
+        title={`Delete ${selectedIds.size} document${selectedIds.size > 1 ? 's' : ''}?`}
+        description="The selected documents will be removed from this wiki. This cannot be undone."
+        confirmLabel="Delete"
+        busyLabel="Deleting…"
+        busy={bulkDeleting}
+        onConfirm={handleDeleteSelected}
+        destructive
+        onCloseAutoFocus={restoreFocusToRoot}
       />
     </div>
   )

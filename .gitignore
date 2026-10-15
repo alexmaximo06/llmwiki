@@ -60,3 +60,6 @@ docs/
 
 # Local-only developer scripts (apply_migration.sh, one-shot utilities)
 scripts/
+# impeccable skill artifacts
+.impeccable/
+PRODUCT.md

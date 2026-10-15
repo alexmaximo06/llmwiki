@@ -18,7 +18,7 @@ def _stub_pdf_extract(monkeypatch, extract_fn) -> None:
     module.extract_pdf = extract_fn
     monkeypatch.setitem(sys.modules, "services.pdf_extract", module)
 
-SCHEMA_PATH = Path(__file__).parents[2] / "shared" / "sqlite_schema.sql"
+SCHEMA_PATH = Path(__file__).parents[2] / "shared" / "sqlite_migrations" / "0001_baseline.sql"
 USER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
 

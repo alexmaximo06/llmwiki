@@ -1,9 +1,8 @@
 import asyncio
-from contextlib import asynccontextmanager
 import json
+from contextlib import asynccontextmanager
 
 import asyncpg
-
 from config import settings
 
 _pool: asyncpg.Pool | None = None

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -9,8 +9,8 @@ class Element:
     id: str
     content: str
     kind: str  # "heading", "paragraph", "table", "list", "blockquote", "code", "form", "text"
-    content_start_offset: Optional[int] = None
-    content_end_offset: Optional[int] = None
+    content_start_offset: int | None = None
+    content_end_offset: int | None = None
 
 
 @dataclass
@@ -18,9 +18,9 @@ class Image:
     url: str
     alt: str = ""
     ref: str = ""
-    width: Optional[int] = None
-    height: Optional[int] = None
-    candidate_urls: List[str] = field(default_factory=list)
+    width: int | None = None
+    height: int | None = None
+    candidate_urls: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -31,8 +31,8 @@ class TextAnchor:
     text_start: int
     text_end: int
     text_content: str
-    prefix: Optional[str] = None
-    suffix: Optional[str] = None
+    prefix: str | None = None
+    suffix: str | None = None
 
 
 @dataclass
@@ -43,16 +43,16 @@ class MappedHighlight:
     computed by the parser. Returned in ParseResult.highlights when the caller
     passes highlights to Parser.parse(...).
     """
-    payload: Dict[str, Any]
-    text_anchor: Optional[TextAnchor] = None
+    payload: dict[str, Any]
+    text_anchor: TextAnchor | None = None
 
 
 @dataclass
 class ParseResult:
     content: str
-    images: List[Image] = field(default_factory=list)
+    images: list[Image] = field(default_factory=list)
     form_elements: list = field(default_factory=list)
     url: str = ""
-    elements: List[Element] = field(default_factory=list)
+    elements: list[Element] = field(default_factory=list)
     plaintext: str = ""
-    highlights: List[MappedHighlight] = field(default_factory=list)
+    highlights: list[MappedHighlight] = field(default_factory=list)

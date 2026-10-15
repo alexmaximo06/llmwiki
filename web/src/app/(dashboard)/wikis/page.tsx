@@ -15,6 +15,8 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { NameDialog } from '@/components/dialogs/NameDialog'
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuSeparator,
@@ -111,7 +113,7 @@ export default function WikisPage() {
   if (error) {
     return (
       <div className="h-full flex flex-col">
-        <PageHeader onNew={() => setDialogOpen(true)} />
+        <PageHeader onNew={isLocal ? undefined : () => setDialogOpen(true)} />
         <div className="flex-1 flex items-center justify-center p-8">
           <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-sm">
             <div className="flex items-start gap-3">
@@ -141,7 +143,7 @@ export default function WikisPage() {
   if (knowledgeBases.length === 0) {
     return (
       <div className="h-full flex flex-col">
-        <PageHeader onNew={() => setDialogOpen(true)} />
+        <PageHeader onNew={isLocal ? undefined : () => setDialogOpen(true)} />
         <div className="flex-1 flex flex-col items-center justify-center p-8">
           <div className="w-full max-w-2xl">
             <div className="text-center mb-12">
@@ -228,7 +230,7 @@ export default function WikisPage() {
 
   return (
     <div className="h-full flex flex-col">
-      <PageHeader onNew={() => setDialogOpen(true)} />
+      <PageHeader onNew={isLocal ? undefined : () => setDialogOpen(true)} />
 
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-4xl mx-auto px-8 py-6">
@@ -243,13 +245,15 @@ export default function WikisPage() {
               />
             ))}
 
-            <button
-              onClick={() => setDialogOpen(true)}
-              className="flex flex-col items-center justify-center gap-2 p-5 rounded-xl border border-dashed border-border hover:border-primary/50 hover:bg-accent/30 transition-colors cursor-pointer min-h-[112px]"
-            >
-              <Plus size={16} className="text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">New Wiki</span>
-            </button>
+            {!isLocal && (
+              <button
+                onClick={() => setDialogOpen(true)}
+                className="flex flex-col items-center justify-center gap-2 p-5 rounded-xl border border-dashed border-border hover:border-primary/50 hover:bg-accent/30 transition-colors cursor-pointer min-h-[112px]"
+              >
+                <Plus size={16} className="text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">New Wiki</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -285,6 +289,18 @@ function WikiCard({
   const [deleteOpen, setDeleteOpen] = React.useState(false)
   const [renameName, setRenameName] = React.useState(kb.name)
   const [busy, setBusy] = React.useState(false)
+  const menuTriggerRef = React.useRef<HTMLButtonElement>(null)
+
+  // After a successful delete the card is gone — fall back to the page title.
+  const restoreFocus = React.useCallback((event: Event) => {
+    event.preventDefault()
+    const trigger = menuTriggerRef.current
+    if (trigger && trigger.isConnected) {
+      trigger.focus()
+      return
+    }
+    document.getElementById('wikis-page-title')?.focus()
+  }, [])
 
   const lessonCount = kb.lesson_count ?? 0
   const lessonsCompleted = kb.lessons_completed ?? 0
@@ -372,6 +388,7 @@ function WikiCard({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
+                  ref={menuTriggerRef}
                   aria-label="Wiki actions"
                   className="flex items-center justify-center size-7 rounded-md text-muted-foreground/50 hover:text-foreground hover:bg-accent opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 transition-opacity cursor-pointer"
                 >
@@ -388,10 +405,12 @@ function WikiCard({
                   <Pencil />
                   Rename
                 </DropdownMenuItem>
-                <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
-                  <Trash2 />
-                  Delete
-                </DropdownMenuItem>
+                {!isLocal && (
+                  <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
+                    <Trash2 />
+                    Delete
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </span>
@@ -408,43 +427,35 @@ function WikiCard({
         </div>
       </motion.div>
 
-      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Rename wiki</DialogTitle>
-          </DialogHeader>
-          <Input
-            value={renameName}
-            onChange={(e) => setRenameName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleRename()}
-            autoFocus
-          />
-          <DialogFooter>
-            <Button onClick={handleRename} disabled={busy || !renameName.trim() || renameName.trim() === kb.name}>
-              {busy ? 'Renaming…' : 'Rename'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <NameDialog
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+        title="Rename wiki"
+        value={renameName}
+        onValueChange={setRenameName}
+        submitLabel="Rename"
+        busyLabel="Renaming…"
+        busy={busy}
+        submitDisabled={renameName.trim() === kb.name}
+        onSubmit={handleRename}
+        onCloseAutoFocus={restoreFocus}
+      />
 
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete wiki</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            This will permanently delete <strong>{kb.name}</strong> and all its documents. This cannot be undone.
-          </p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteOpen(false)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDelete} disabled={busy}>
-              {busy ? 'Deleting…' : 'Delete'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {!isLocal && (
+        <ConfirmDialog
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          title="Delete wiki"
+          description={<>This permanently deletes <strong>{kb.name}</strong> and all its sources and wiki pages. This cannot be undone.</>}
+          confirmLabel="Delete"
+          busyLabel="Deleting…"
+          busy={busy}
+          onConfirm={handleDelete}
+          destructive
+          confirmText={kb.name}
+          onCloseAutoFocus={restoreFocus}
+        />
+      )}
     </>
   )
 }
@@ -494,7 +505,7 @@ function ProgressDonut({ percent, label }: { percent: number; label: string }) {
 function PageHeader({ onNew }: { onNew?: () => void }) {
   return (
     <div className="shrink-0 flex items-center justify-between px-6 h-12 border-b border-border">
-      <span className="text-sm font-medium text-foreground tracking-tight">LLM Wiki</span>
+      <span id="wikis-page-title" tabIndex={-1} className="text-sm font-medium text-foreground tracking-tight outline-none">LLM Wiki</span>
       <div className="flex items-center gap-1">
         {onNew && (
           <button

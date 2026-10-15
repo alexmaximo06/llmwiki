@@ -1,17 +1,18 @@
 """Comments tool — list highlight comment threads across the vault."""
 
-from datetime import datetime, timezone
-
-from mcp.server.fastmcp import FastMCP, Context
+from datetime import UTC, datetime
 
 from vaultfs import VaultFS
 from vaultfs.highlights import parse_highlights_value
+
+from mcp.server.fastmcp import Context, FastMCP
+
 from .helpers import clean_annotation_text, glob_match, highlight_quote_and_page
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 
-_EPOCH = datetime.fromtimestamp(0, tz=timezone.utc)
+_EPOCH = datetime.fromtimestamp(0, tz=UTC)
 
 
 def _parse_timestamp(value) -> datetime:
@@ -21,7 +22,7 @@ def _parse_timestamp(value) -> datetime:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return _EPOCH
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 class CommentsHandler:

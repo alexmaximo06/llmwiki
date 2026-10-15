@@ -1,9 +1,8 @@
 """Unit tests for MCP read highlight materialization."""
 
-import os
+import importlib.util
 import sys
 import types
-import importlib.util
 from pathlib import Path
 
 MCP_DIR = Path(__file__).resolve().parents[3] / "mcp"
@@ -11,11 +10,7 @@ sys.path.insert(0, str(MCP_DIR))
 
 
 def _materializer():
-    """Import the pure helper without loading VaultFS implementations.
-
-    Other unit tests put api/services on sys.path, which can collide with
-    mcp/services during import. This test only needs read.py's formatter.
-    """
+    """Import the pure helper without loading VaultFS implementations."""
     fake_vaultfs = types.ModuleType("vaultfs")
     fake_vaultfs.VaultFS = object
     previous = sys.modules.get("vaultfs")

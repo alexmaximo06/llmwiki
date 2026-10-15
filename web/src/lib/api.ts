@@ -114,5 +114,9 @@ export async function apiFetch<T>(
 }
 
 export function getDocumentsWsUrl(kbId: string): string {
+  if (API_URL.startsWith('/')) {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    return `${protocol}//${window.location.host}${API_URL}/v1/ws/documents/${kbId}`
+  }
   return `${WS_URL}/v1/ws/documents/${kbId}`
 }

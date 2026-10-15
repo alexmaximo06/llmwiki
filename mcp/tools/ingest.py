@@ -1,9 +1,9 @@
 """Source ingestion — pull a public PDF into a knowledge base by URL (hosted mode only)."""
 
 import httpx
-from mcp.server.fastmcp import FastMCP, Context
-
 from config import settings
+
+from mcp.server.fastmcp import Context, FastMCP
 
 INGEST_TIMEOUT = 120
 

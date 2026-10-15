@@ -8,15 +8,15 @@ Postgres lacks. Its tenancy guards (`d.user_id = $3` plus RLS on
 document_chunks) are the same ones every other query here exercises.
 """
 
+import json
 import os
 import uuid
 
 import asyncpg
-import pytest
-
-from vaultfs.postgres import PostgresVaultFS
-from vaultfs.base import StorageQuotaExceededError
 import db as mcp_db
+import pytest
+from vaultfs.base import StorageQuotaExceededError
+from vaultfs.postgres import PostgresVaultFS
 
 USER_A_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 USER_B_ID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -224,21 +224,6 @@ class TestReadIsolation:
         assert data == b"asset-bytes"
         assert calls == [f"{USER_A_ID}/{ASSET_A_ID}/source.png"]
 
-    async def test_load_image_bytes_uses_own_prefix(self, fs_alice, monkeypatch):
-        """Image S3 keys are always prefixed with the caller's user_id, so a
-        foreign document_id can never resolve to another tenant's object."""
-        calls: list[str] = []
-
-        async def fake_load_s3(self, key):
-            calls.append(key)
-            return b"img"
-
-        monkeypatch.setattr(PostgresVaultFS, "_load_s3", fake_load_s3)
-
-        await fs_alice.load_image_bytes(str(DOC_B_ID), "fig-1.png")
-
-        assert calls == [f"{USER_A_ID}/{DOC_B_ID}/images/fig-1.png"]
-
 
 class TestWriteIsolation:
     """PostgresVaultFS writes include WHERE user_id = $N (service-role)."""
@@ -287,6 +272,11 @@ class TestWriteIsolation:
         assert row["slug"] == "deep-learning-notes"
         assert row["kind"] == "wiki"
 
+    async def test_update_knowledge_base_rename_to_same_slug_keeps_it(self, fs_alice):
+        first = await fs_alice.update_knowledge_base(str(KB_A_ID), name="Deep Learning Notes")
+        again = await fs_alice.update_knowledge_base(str(KB_A_ID), name="Deep learning notes")
+        assert again["slug"] == first["slug"] == "deep-learning-notes"
+
     async def test_create_document_into_other_tenant_kb_rejected(self, fs_alice, pg_pool):
         """create_document writes into the caller's own KB but refuses a foreign one."""
         own = await fs_alice.create_document(
@@ -311,7 +301,7 @@ class TestTextStorageAccounting:
         assert await pg_pool.fetchval(
             "SELECT file_size FROM documents WHERE id = $1",
             doc["id"],
-        ) == len("hé".encode("utf-8"))
+        ) == len("hé".encode())
 
     async def test_create_rejects_quota_without_inserting(self, fs_alice, pg_pool):
         await pg_pool.execute(
@@ -346,6 +336,25 @@ class TestTextStorageAccounting:
             DOC_A_ID,
         )
         assert dict(row) == {"content": "Alice secret", "file_size": 1}
+
+    async def test_update_clears_the_pages_own_stale_flag(self, fs_alice, pg_pool):
+        await pg_pool.execute("UPDATE documents SET stale_since = now() WHERE id = $1", DOC_A_ID)
+
+        await fs_alice.update_document(DOC_A_ID, "refreshed body")
+
+        assert await pg_pool.fetchval("SELECT stale_since FROM documents WHERE id = $1", DOC_A_ID) is None
+
+    async def test_update_merges_frontmatter_metadata_into_app_state(self, fs_alice, pg_pool):
+        await pg_pool.execute(
+            "UPDATE documents SET metadata = $1::jsonb WHERE id = $2",
+            '{"course": {"status": "complete"}, "source_url": "https://example.com", "description": "old"}',
+            DOC_A_ID,
+        )
+
+        await fs_alice.update_document(DOC_A_ID, "new body", metadata={})
+
+        metadata = json.loads(await pg_pool.fetchval("SELECT metadata FROM documents WHERE id = $1", DOC_A_ID))
+        assert metadata == {"course": {"status": "complete"}, "source_url": "https://example.com"}
 
 
 class TestReplyIsolation:

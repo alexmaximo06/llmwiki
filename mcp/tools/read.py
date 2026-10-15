@@ -4,13 +4,18 @@ import base64
 import json
 import logging
 
-from mcp.server.fastmcp import FastMCP, Context
-from mcp.types import TextContent, ImageContent
-
 from vaultfs import VaultFS
+
+from mcp.server.fastmcp import Context, FastMCP
+from mcp.types import ImageContent, TextContent
+
 from .helpers import (
-    clean_annotation_text, deep_link, glob_match, highlight_quote_and_page,
-    parse_page_range, resolve_path,
+    clean_annotation_text,
+    deep_link,
+    glob_match,
+    highlight_quote_and_page,
+    parse_page_range,
+    resolve_path,
 )
 from .references import get_backlinks_summary
 
@@ -310,9 +315,9 @@ class ReadHandler:
                 img_id = img_meta.get("id")
                 if not img_id:
                     continue
-                img_bytes = await self.fs.load_image_bytes(doc_id, img_id)
+                img_bytes = await self.fs.load_asset_bytes(img_id)
                 if img_bytes:
-                    fmt = "jpeg" if img_id.endswith((".jpg", ".jpeg")) else "png"
+                    fmt = "jpeg" if str(img_meta.get("filename", "")).endswith((".jpg", ".jpeg")) else "png"
                     content_blocks.append(_image(img_bytes, fmt))
                     has_images = True
 

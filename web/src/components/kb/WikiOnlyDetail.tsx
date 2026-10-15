@@ -4,13 +4,11 @@ import * as React from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ArrowUpRight, BookOpen, Loader2, PlugZap, Upload as UploadIcon } from 'lucide-react'
 import { toast } from 'sonner'
-import { Button } from '@/components/ui/button'
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
-} from '@/components/ui/dialog'
+import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { KBSidenav } from '@/components/kb/KBSidenav'
 import { PlanProgress } from '@/components/kb/PlanProgress'
 import { RecentChanges } from '@/components/kb/RecentChanges'
+import { DocumentsLoadError } from '@/components/kb/DocumentsLoadError'
 import { openMcpConnectionDock } from '@/components/connections/McpConnectionDock'
 import { WikiContent } from '@/components/wiki/WikiContent'
 import { useKBDocuments } from '@/hooks/useKBDocuments'
@@ -18,7 +16,7 @@ import { apiFetch } from '@/lib/api'
 import { useUserStore } from '@/stores'
 import type { DocumentListItem, WikiNode } from '@/lib/types'
 import {
-  enrichTreeWithProgress, findCurrentLesson, flattenLessons, flattenPages, lessonStatus,
+  enrichTreeWithProgress, findCurrentLesson, flattenLessons, flattenPages, lessonStatus, resolveWikiHref,
 } from '@/lib/wikiTree'
 import { isOwnWrite } from '@/lib/highlights/ownWrites'
 import { parsePlanTasks, type PlanSummary } from '@/lib/planTasks'
@@ -146,7 +144,8 @@ export function WikiOnlyDetail({
   const router = useRouter()
   const searchParams = useSearchParams()
   const token = useUserStore((s) => s.accessToken)
-  const { documents, setDocuments, loading } = useKBDocuments(kbId)
+  const { documents, setDocuments, loading, loadError, refetchDocuments } = useKBDocuments(kbId)
+  const [filesNavPending, setFilesNavPending] = React.useState(false)
   const courseMode = kbKind === 'course'
   const { markComplete } = useCourseProgress(setDocuments)
 
@@ -431,40 +430,33 @@ export function WikiOnlyDetail({
 
   const handleWikiNavigate = React.useCallback(
     (path: string) => {
-      let nextPath = path
-      if (path.startsWith('/wiki/')) {
-        nextPath = path.replace(/^\/wiki\/?/, '')
-      } else if (path.startsWith('/')) {
-        nextPath = path.slice(1)
-      } else if (!wikiPathSet.has(path) && wikiActivePath) {
-        const dir = wikiActivePath.includes('/')
-          ? wikiActivePath.substring(0, wikiActivePath.lastIndexOf('/'))
-          : ''
-        let resolved = path.startsWith('./')
-          ? (dir ? dir + '/' : '') + path.slice(2)
-          : (dir ? dir + '/' : '') + path
-        while (resolved.includes('../')) {
-          resolved = resolved.replace(/[^/]*\/\.\.\//, '')
-        }
-        nextPath = resolved
-      }
-      handleWikiSelect(nextPath)
+      handleWikiSelect(resolveWikiHref(path, wikiActivePath, wikiPathSet))
     },
     [handleWikiSelect, wikiActivePath, wikiPathSet],
   )
 
   // ─── Page deletion (structural pages are protected, like the MCP delete tool) ─
   const [confirmingDelete, setConfirmingDelete] = React.useState(false)
+  const rootRef = React.useRef<HTMLDivElement>(null)
+
+  const restoreFocusToRoot = React.useCallback((event: Event) => {
+    event.preventDefault()
+    rootRef.current?.focus()
+  }, [])
+  const [deletingPage, setDeletingPage] = React.useState(false)
   const isStructuralPage = wikiActivePath === 'overview.md' || wikiActivePath === 'log.md'
 
   const handleDeletePage = React.useCallback(async () => {
     if (!activeWikiDoc || !token) return
     const target = pagerNeighbors.next ?? pagerNeighbors.prev
+    setDeletingPage(true)
     try {
       await apiFetch(`/v1/documents/${activeWikiDoc.id}`, token, { method: 'DELETE' })
     } catch {
       toast.error('Failed to delete page')
       return
+    } finally {
+      setDeletingPage(false)
     }
     setConfirmingDelete(false)
     setDocuments((prev) => prev.filter((d) => d.id !== activeWikiDoc.id))
@@ -511,7 +503,7 @@ export function WikiOnlyDetail({
   )
 
   return (
-    <div className="flex h-full flex-col">
+    <div ref={rootRef} tabIndex={-1} className="flex h-full flex-col outline-none">
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div className="shrink-0">
           <KBSidenav
@@ -523,9 +515,9 @@ export function WikiOnlyDetail({
             sourceDocs={sourceDocs}
             hasWiki={hasNavigableWiki}
             loading={loading}
-            onUpload={() => router.push(`/wikis/${kbSlug}/files`)}
-            filesViewActive={false}
-            onFilesToggle={() => router.push(`/wikis/${kbSlug}/files`)}
+            onUpload={() => { setFilesNavPending(true); router.push(`/wikis/${kbSlug}/files`) }}
+            filesViewActive={filesNavPending}
+            onOpenFiles={() => { setFilesNavPending(true); router.push(`/wikis/${kbSlug}/files`) }}
             graphViewActive={false}
             onGraphToggle={() => router.push(`/wikis/${kbSlug}/graph`)}
             onOpenSourceDoc={(docId) => {
@@ -540,26 +532,31 @@ export function WikiOnlyDetail({
           />
         </div>
         <div className="min-w-0 flex-1">
-          {showMainLoading || pageLoading ? (
+          {loadError && documents.length === 0 ? (
+            <DocumentsLoadError onRetry={refetchDocuments} />
+          ) : showMainLoading || pageLoading ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="size-5 animate-spin text-muted-foreground" />
             </div>
           ) : !courseMode && !wikiActivePath ? (
-            <RecentChanges
-              kbId={kbId}
-              kbSlug={kbSlug}
-              kbName={kbName}
-              documents={documents}
-              refreshKey={activityRefreshKey}
-              onWikiNavigate={handleWikiSelect}
-              planSlot={planSummary && planSummary.total > 0 ? (
-                <PlanProgress
-                  summary={planSummary}
-                  onOpen={() => handleWikiSelect('plan.md', planDoc?.document_number ?? null)}
-                />
-              ) : null}
-            />
+            <div className="h-full animate-tab-in">
+              <RecentChanges
+                kbId={kbId}
+                kbSlug={kbSlug}
+                kbName={kbName}
+                documents={documents}
+                refreshKey={activityRefreshKey}
+                onWikiNavigate={handleWikiSelect}
+                planSlot={planSummary && planSummary.total > 0 ? (
+                  <PlanProgress
+                    summary={planSummary}
+                    onOpen={() => handleWikiSelect('plan.md', planDoc?.document_number ?? null)}
+                  />
+                ) : null}
+              />
+            </div>
           ) : hasNavigableWiki && wikiActivePath ? (
+            <div key={wikiActivePath} className="h-full animate-tab-in">
             <WikiContent
               content={pageContent}
               title={pageTitle}
@@ -583,8 +580,9 @@ export function WikiOnlyDetail({
               nextPage={pagerNeighbors.next}
               onDelete={isStructuralPage ? null : () => setConfirmingDelete(true)}
             />
+            </div>
           ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-4 px-6">
+            <div className="flex h-full flex-col items-center justify-center gap-4 px-6 animate-tab-in">
               <BookOpen className="size-10 text-muted-foreground/20" />
               <div className="max-w-sm text-center">
                 <h3 className="mb-1.5 text-base font-medium">No wiki yet</h3>
@@ -625,24 +623,18 @@ export function WikiOnlyDetail({
           )}
         </div>
       </div>
-      <Dialog open={confirmingDelete} onOpenChange={setConfirmingDelete}>
-        <DialogContent className="sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Delete this page?</DialogTitle>
-            <DialogDescription>
-              &ldquo;{pageTitle}&rdquo; will be removed from this wiki. This can&apos;t be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setConfirmingDelete(false)}>
-              Cancel
-            </Button>
-            <Button variant="destructive" onClick={handleDeletePage}>
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ConfirmDialog
+        open={confirmingDelete}
+        onOpenChange={setConfirmingDelete}
+        title="Delete this page?"
+        description={<>&ldquo;{pageTitle}&rdquo; will be removed from this wiki. This can&apos;t be undone.</>}
+        confirmLabel="Delete"
+        busyLabel="Deleting…"
+        busy={deletingPage}
+        onConfirm={handleDeletePage}
+        destructive
+        onCloseAutoFocus={restoreFocusToRoot}
+      />
     </div>
   )
 }

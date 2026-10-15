@@ -7,6 +7,7 @@ import json
 import logging
 import uuid
 
+import asyncpg
 from infra.db.sqlite import rows_to_dicts, serialized_write
 from services.references import build_lookup_maps, extract_references
 
@@ -17,7 +18,7 @@ def _parse_json(raw, default=None):
     """Safely parse a JSON string or return the value if already parsed."""
     if raw is None:
         return default
-    if isinstance(raw, (dict, list)):
+    if isinstance(raw, dict | list):
         return raw
     try:
         return json.loads(raw)
@@ -110,8 +111,8 @@ async def rebuild_hosted(conn, kb_id, user_id: str) -> dict:
             kb_id, user_id,
         )
 
-        total_cites = 0
-        total_links = 0
+        cites: list[tuple] = []
+        links: list[tuple] = []
 
         for page in wiki_pages:
             content = page["content"] or ""
@@ -126,27 +127,43 @@ async def rebuild_hosted(conn, kb_id, user_id: str) -> dict:
 
             for edge in edges:
                 if edge["type"] == "cites":
-                    await conn.execute(
-                        "INSERT INTO document_references "
-                        "(source_document_id, target_document_id, knowledge_base_id, reference_type, page) "
-                        "VALUES ($1, $2, $3, 'cites', $4) "
-                        "ON CONFLICT (source_document_id, target_document_id, reference_type) "
-                        "DO UPDATE SET page = EXCLUDED.page, created_at = now()",
-                        page["id"], edge["target_id"], kb_id, edge["page"],
-                    )
-                    total_cites += 1
+                    cites.append((page["id"], edge["target_id"], edge["page"]))
                 else:
-                    await conn.execute(
-                        "INSERT INTO document_references "
-                        "(source_document_id, target_document_id, knowledge_base_id, reference_type) "
-                        "VALUES ($1, $2, $3, 'links_to') "
-                        "ON CONFLICT (source_document_id, target_document_id, reference_type) DO NOTHING",
-                        page["id"], edge["target_id"], kb_id,
-                    )
-                    total_links += 1
+                    links.append((page["id"], edge["target_id"]))
 
-    logger.info("Rebuilt references for KB %s: %d citations, %d links", str(kb_id)[:8], total_cites, total_links)
-    return {"citations": total_cites, "links": total_links}
+        await _insert_cites(conn, kb_id, cites)
+        await _insert_links(conn, kb_id, links)
+
+    logger.info("Rebuilt references for KB %s: %d citations, %d links", str(kb_id)[:8], len(cites), len(links))
+    return {"citations": len(cites), "links": len(links)}
+
+
+async def _insert_cites(conn: asyncpg.Connection, kb_id: str, cites: list[tuple]) -> None:
+    await conn.execute(
+        "INSERT INTO document_references "
+        "(source_document_id, target_document_id, knowledge_base_id, reference_type, page) "
+        "SELECT e.source_id, e.target_id, $1::uuid, 'cites', e.page "
+        "FROM UNNEST($2::uuid[], $3::uuid[], $4::int[]) AS e(source_id, target_id, page) "
+        "ON CONFLICT (source_document_id, target_document_id, reference_type) "
+        "DO UPDATE SET page = EXCLUDED.page, created_at = now()",
+        kb_id,
+        [source_id for source_id, _, _ in cites],
+        [target_id for _, target_id, _ in cites],
+        [page for _, _, page in cites],
+    )
+
+
+async def _insert_links(conn: asyncpg.Connection, kb_id: str, links: list[tuple]) -> None:
+    await conn.execute(
+        "INSERT INTO document_references "
+        "(source_document_id, target_document_id, knowledge_base_id, reference_type) "
+        "SELECT e.source_id, e.target_id, $1::uuid, 'links_to' "
+        "FROM UNNEST($2::uuid[], $3::uuid[]) AS e(source_id, target_id) "
+        "ON CONFLICT (source_document_id, target_document_id, reference_type) DO NOTHING",
+        kb_id,
+        [source_id for source_id, _ in links],
+        [target_id for _, target_id in links],
+    )
 
 
 # ── Local (aiosqlite) ──
