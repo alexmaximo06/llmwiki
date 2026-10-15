@@ -260,14 +260,15 @@ def _place_without_replacing(old_path: Path, new_path: Path) -> None:
         raise
     except OSError:
         pass  # filesystem without hard links (FAT/exFAT, some SMB/FUSE mounts)
-    with old_path.open("rb") as source, new_path.open("xb") as target:
+    with old_path.open("rb") as source:
+        target = new_path.open("xb")
         try:
-            shutil.copyfileobj(source, target)
+            with target:
+                shutil.copyfileobj(source, target)
+            shutil.copystat(old_path, new_path)
         except BaseException:
-            target.close()
             new_path.unlink(missing_ok=True)
             raise
-    shutil.copystat(old_path, new_path)
 
 
 def _unlink_file(path: Path) -> None:

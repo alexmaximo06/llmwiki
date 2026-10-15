@@ -56,7 +56,7 @@ function HostedDashboard({ children }: { children: React.ReactNode }) {
     import('@/lib/supabase/client').then(async ({ createClient }) => {
       if (cancelled) return
       const supabase = createClient()
-      const auth = await checkAuth(supabase)
+      const auth = await checkAuth(supabase, bounceToLogin)
       if (cancelled) return
       if (auth.kind === 'signed_out') {
         await bounceToLogin()

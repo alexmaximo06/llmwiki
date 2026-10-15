@@ -47,9 +47,11 @@ function isRejection(error: { status?: number } | null): boolean {
   return error?.status !== undefined && AUTH_REJECTION_STATUSES.has(error.status)
 }
 
+type UserVerification = ReturnType<SupabaseClient['auth']['getUser']>
+
 // Session first (local, may refresh), then server verification. A slow or failing auth
-// server must never sign the user out; only an explicit rejection does.
-export async function checkAuth(supabase: SupabaseClient): Promise<AuthCheck> {
+// server must never sign the user out; only an explicit rejection does, even a late one.
+export async function checkAuth(supabase: SupabaseClient, onLateRejection: () => void): Promise<AuthCheck> {
   let session: Session | null
   try {
     const { data, error } = await withAuthTimeout(supabase.auth.getSession())
@@ -60,12 +62,17 @@ export async function checkAuth(supabase: SupabaseClient): Promise<AuthCheck> {
   }
   if (!session) return { kind: 'signed_out' }
 
+  const verification = supabase.auth.getUser()
   try {
-    const { data: { user }, error } = await withAuthTimeout(supabase.auth.getUser())
+    const { data: { user }, error } = await withAuthTimeout(verification)
     if (user) return { kind: 'signed_in', user, session }
     if (isRejection(error)) return { kind: 'signed_out' }
   } catch {
-    // Verification timed out or failed transiently: trust the stored session.
+    watchForLateRejection(verification, onLateRejection)
   }
   return { kind: 'signed_in', user: session.user, session }
+}
+
+function watchForLateRejection(verification: UserVerification, onRejected: () => void): void {
+  verification.then(({ error }) => { if (isRejection(error)) onRejected() }, () => {})
 }

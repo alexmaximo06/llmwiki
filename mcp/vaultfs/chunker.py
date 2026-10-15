@@ -210,12 +210,13 @@ async def _count_unchanged_prefix_pg(conn: asyncpg.Connection, document_id: str,
 
 def _chunk_fingerprint(chunk: Chunk) -> tuple:
     digest = hashlib.md5(chunk.content.encode()).hexdigest()
-    return (chunk.index, digest, chunk.page, chunk.start_char, chunk.token_count, chunk.header_breadcrumb)
+    # Annotated chunks never count as unchanged: highlight assignment can move when other chunks change.
+    return (chunk.index, digest, chunk.page, chunk.start_char, chunk.token_count, chunk.header_breadcrumb, False)
 
 
 async def _fetch_chunk_fingerprints_pg(conn: asyncpg.Connection, document_id: str) -> list[asyncpg.Record]:
     return await conn.fetch(
-        "SELECT chunk_index, md5(source_content), page, start_char, token_count, header_breadcrumb "
+        "SELECT chunk_index, md5(source_content), page, start_char, token_count, header_breadcrumb, has_highlight "
         "FROM document_chunks WHERE document_id = $1 ORDER BY chunk_index",
         document_id,
     )

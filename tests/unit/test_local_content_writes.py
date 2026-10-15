@@ -218,3 +218,25 @@ async def test_failed_source_removal_leaves_no_second_path(service, tmp_path: Pa
 
     assert (tmp_path / "a.md").read_text() == "A"
     assert not (tmp_path / "c.md").exists()
+
+
+async def test_failed_copy_metadata_leaves_no_second_path(service, tmp_path: Path, monkeypatch) -> None:
+    import services.local as local_module
+
+    def no_links(src, dst):
+        raise PermissionError("hard links not supported")
+
+    def refuse_copystat(src, dst):
+        raise PermissionError("cannot set times on this mount")
+
+    monkeypatch.setattr(local_module.os, "link", no_links)
+    monkeypatch.setattr(local_module.shutil, "copystat", refuse_copystat)
+    svc, db = service
+    (tmp_path / "a.md").write_text("A")
+    doc_a = await _seed(db, "a.md", "md")
+
+    with pytest.raises(PermissionError):
+        await svc.update_metadata(doc_a, {"filename": "c.md"})
+
+    assert (tmp_path / "a.md").read_text() == "A"
+    assert not (tmp_path / "c.md").exists()

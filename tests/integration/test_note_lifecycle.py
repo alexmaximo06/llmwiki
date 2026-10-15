@@ -1,5 +1,6 @@
 """Integration tests for note (document) CRUD lifecycle."""
 
+import asyncio
 import json
 import uuid
 
@@ -612,3 +613,41 @@ async def insert_doc(pool, filename: str, path: str, file_type: str, content: st
         "VALUES ($1, $2, $3, $3, $4, $5, 'ready', $6) RETURNING id",
         KB_ID, USER_ID, filename, path, file_type, content,
     )
+
+
+class TestChunkStore:
+
+    async def test_annotated_chunk_is_rewritten_even_when_unchanged(self, pool):
+        from services.chunker import chunk_text, store_chunks
+
+        doc_id = str(await insert_doc(pool, "note.md", "/wiki/", "md", "x"))
+        chunks = chunk_text("Unchanged text that stays the same. " * 10)
+        await store_chunks(pool, doc_id, USER_ID, KB_ID, chunks)
+        await pool.execute(
+            "UPDATE document_chunks SET has_highlight = true, annotations_text = 'old comment', "
+            "content = content || ' old comment' WHERE document_id = $1",
+            doc_id,
+        )
+
+        await store_chunks(pool, doc_id, USER_ID, KB_ID, chunks)
+
+        row = await pool.fetchrow(
+            "SELECT has_highlight, annotations_text, content, source_content FROM document_chunks "
+            "WHERE document_id = $1",
+            doc_id,
+        )
+        assert (row["has_highlight"], row["annotations_text"]) == (False, None)
+        assert row["content"] == row["source_content"]
+
+    async def test_pool_writes_wait_for_the_document_lock(self, pool):
+        from services.chunker import chunk_text, store_chunks
+
+        doc_id = str(await insert_doc(pool, "note.md", "/wiki/", "md", "x"))
+        async with pool.acquire() as holder, holder.transaction():
+            await holder.execute("SELECT 1 FROM documents WHERE id = $1 FOR NO KEY UPDATE", doc_id)
+            write = asyncio.create_task(store_chunks(pool, doc_id, USER_ID, KB_ID, chunk_text("New text. " * 10)))
+            await asyncio.sleep(0.3)
+            assert not write.done()
+        await asyncio.wait_for(write, timeout=5)
+        assert await pool.fetchval("SELECT COUNT(*) FROM document_chunks WHERE document_id = $1", doc_id) == 1
+

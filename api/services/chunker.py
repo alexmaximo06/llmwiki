@@ -183,7 +183,9 @@ async def store_chunks(
     else:
         conn = await pool_or_conn.acquire()
         try:
-            await _store_chunks_on_conn(conn, document_id, user_id, knowledge_base_id, chunks)
+            async with conn.transaction():
+                await _lock_document(conn, document_id)
+                await _store_chunks_on_conn(conn, document_id, user_id, knowledge_base_id, chunks)
         finally:
             await pool_or_conn.release(conn)
 
@@ -241,12 +243,17 @@ async def _count_unchanged_prefix(conn: asyncpg.Connection, document_id: str, ch
 
 def _chunk_fingerprint(chunk: Chunk) -> tuple:
     digest = hashlib.md5(chunk.content.encode()).hexdigest()
-    return (chunk.index, digest, chunk.page, chunk.start_char, chunk.token_count, chunk.header_breadcrumb)
+    # Annotated chunks never count as unchanged: highlight assignment can move when other chunks change.
+    return (chunk.index, digest, chunk.page, chunk.start_char, chunk.token_count, chunk.header_breadcrumb, False)
+
+
+async def _lock_document(conn: asyncpg.Connection, document_id: str) -> None:
+    await conn.execute("SELECT 1 FROM documents WHERE id = $1 FOR NO KEY UPDATE", document_id)
 
 
 async def _fetch_chunk_fingerprints(conn: asyncpg.Connection, document_id: str) -> list[asyncpg.Record]:
     return await conn.fetch(
-        "SELECT chunk_index, md5(source_content), page, start_char, token_count, header_breadcrumb "
+        "SELECT chunk_index, md5(source_content), page, start_char, token_count, header_breadcrumb, has_highlight "
         "FROM document_chunks WHERE document_id = $1 ORDER BY chunk_index",
         document_id,
     )
