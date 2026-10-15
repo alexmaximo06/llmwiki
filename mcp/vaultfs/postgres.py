@@ -115,7 +115,7 @@ class PostgresVaultFS(VaultFS):
         # service role with the explicit user_id filter, like every other KB write.
         # Renaming regenerates the slug, matching the web API's semantics.
         if name is not None:
-            slug = await self._unique_slug(name)
+            slug = await self._unique_slug(name, exclude_kb_id=kb_id)
             return await service_queryrow(
                 "UPDATE knowledge_bases SET name = $1, slug = $2, "
                 "description = COALESCE($3, description), kind = COALESCE($4, kind), updated_at = now() "
@@ -211,6 +211,7 @@ class PostgresVaultFS(VaultFS):
             "file_size = $4",
             "version = COALESCE(version, 0) + 1",
             "updated_at = now()",
+            "stale_since = NULL",
         ]
         args: list = [content, doc_id, self.user_id, content_size]
         idx = 5
@@ -228,7 +229,7 @@ class PostgresVaultFS(VaultFS):
             args.append(date)
             idx += 1
         if metadata is not None:
-            sets.append(f"metadata = ${idx}::jsonb")
+            sets.append(f"metadata = (COALESCE(metadata, '{{}}'::jsonb) - 'description') || ${idx}::jsonb")
             args.append(_json.dumps(metadata))
             idx += 1
 
@@ -474,10 +475,6 @@ class PostgresVaultFS(VaultFS):
         s3_key = f"{self.user_id}/{doc['id']}/source.{file_type}"
         return await self._load_s3(s3_key)
 
-    async def load_image_bytes(self, doc_id: str, image_id: str) -> bytes | None:
-        s3_key = f"{self.user_id}/{doc_id}/images/{image_id}"
-        return await self._load_s3(s3_key)
-
     async def load_asset_bytes(self, asset_doc_id: str) -> bytes | None:
         row = await scoped_queryrow(
             self.user_id,
@@ -502,7 +499,7 @@ class PostgresVaultFS(VaultFS):
             return None
 
 
-    def write_to_disk(self, dir_path: str, filename: str, content: str) -> bool:
+    def write_to_disk(self, dir_path: str, filename: str, content: str, *, exclusive: bool = False) -> bool:
         return True
 
     def delete_from_disk(self, docs: list[dict]) -> None:
@@ -644,15 +641,15 @@ class PostgresVaultFS(VaultFS):
                     current_name = f"{name} ({attempt + 2})"
         raise RuntimeError("Could not create knowledge base after too many duplicate names")
 
-    async def _unique_slug(self, name: str, conn=None) -> str:
+    async def _unique_slug(self, name: str, conn=None, exclude_kb_id: str | None = None) -> str:
         base = _slugify(name)
         slug = base
         counter = 2
 
         if conn is not None:
             while await conn.fetchval(
-                "SELECT 1 FROM knowledge_bases WHERE slug = $1 AND user_id = $2",
-                slug, self.user_id,
+                "SELECT 1 FROM knowledge_bases WHERE slug = $1 AND user_id = $2 AND id IS DISTINCT FROM $3::uuid",
+                slug, self.user_id, exclude_kb_id,
             ):
                 slug = f"{base}-{counter}"
                 counter += 1
@@ -660,7 +657,7 @@ class PostgresVaultFS(VaultFS):
 
         pool = await get_pool()
         async with pool.acquire() as acquired:
-            return await self._unique_slug(name, acquired)
+            return await self._unique_slug(name, acquired, exclude_kb_id)
 
     async def _scaffold_wiki(self, kb_id: str, name: str) -> None:
         today = date.today().isoformat()

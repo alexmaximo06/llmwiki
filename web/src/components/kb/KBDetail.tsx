@@ -17,6 +17,8 @@ import { SelectionActionBar } from '@/components/kb/SelectionActionBar'
 import { WikiContent } from '@/components/wiki/WikiContent'
 import type { DocumentListItem, WikiNode } from '@/lib/types'
 import type { ViewMode } from '@/components/kb/viewMode'
+import { resolveWikiHref } from '@/lib/wikiTree'
+import { DocumentsLoadError } from '@/components/kb/DocumentsLoadError'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const isLocal = process.env.NEXT_PUBLIC_MODE === 'local'
@@ -136,7 +138,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
   const searchParams = useSearchParams()
   const token = useUserStore((s) => s.accessToken)
   const userId = useUserStore((s) => s.user?.id)
-  const { documents, setDocuments, loading } = useKBDocuments(kbId)
+  const { documents, setDocuments, loading, loadError, refetchDocuments } = useKBDocuments(kbId)
 
   // ─── Upload tracking (global progress panel) ─────────────────
   const addUpload = useUploadStore((s) => s.addUpload)
@@ -514,25 +516,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
 
   const handleWikiNavigate = React.useCallback(
     (path: string) => {
-      let nextPath = path
-      if (path.startsWith('/wiki/')) {
-        nextPath = path.replace(/^\/wiki\/?/, '')
-      } else if (path.startsWith('/')) {
-        nextPath = path.slice(1)
-      } else if (wikiPathSet.has(path)) {
-        nextPath = path
-      } else if (wikiActivePath) {
-        const dir = wikiActivePath.includes('/')
-          ? wikiActivePath.substring(0, wikiActivePath.lastIndexOf('/'))
-          : ''
-        let resolved = path.startsWith('./')
-          ? (dir ? dir + '/' : '') + path.slice(2)
-          : (dir ? dir + '/' : '') + path
-        while (resolved.includes('../')) {
-          resolved = resolved.replace(/[^/]*\/\.\.\//, '')
-        }
-        nextPath = resolved
-      }
+      const nextPath = resolveWikiHref(path, wikiActivePath, wikiPathSet)
       setWikiActivePath(nextPath)
       const doc = wikiDocs.find((d) => {
         const relative = (d.path + d.filename).replace(/^\/wiki\/?/, '')
@@ -615,7 +599,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
     uploadPathRef.current = targetPath
     const input = document.createElement('input')
     input.type = 'file'
-    input.accept = '.md,.txt,.pdf,.pptx,.ppt,.docx,.doc,.png,.jpg,.jpeg,.webp,.gif,.svg,.xlsx,.xls,.csv,.html,.htm'
+    input.accept = '.md,.txt,.pdf,.pptx,.ppt,.docx,.doc,.png,.jpg,.jpeg,.webp,.gif,.svg,.xlsx,.csv,.html,.htm'
     input.multiple = true
     input.onchange = () => { if (input.files) uploadFiles(Array.from(input.files), uploadPathRef.current) }
     input.click()
@@ -679,7 +663,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
           setDocuments((prev) => [data, ...prev])
         } catch { toast.error(`Failed to import ${file.name}`) }
       } else {
-        const supportedTypes = new Set(['pdf', 'pptx', 'ppt', 'docx', 'doc', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'xlsx', 'xls', 'csv', 'html', 'htm'])
+        const supportedTypes = new Set(['pdf', 'pptx', 'ppt', 'docx', 'doc', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'xlsx', 'csv', 'html', 'htm'])
         if (ext && supportedTypes.has(ext)) {
           if (process.env.NEXT_PUBLIC_MODE === 'local') {
             const uploadId = crypto.randomUUID()
@@ -698,7 +682,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
             await tusUploadFile(file, targetPath)
           }
         } else {
-          toast.info(`${ext} files not yet supported`)
+          toast.info(ext === 'xls' ? 'Legacy .xls files aren\'t supported. Save as .xlsx and upload again.' : `${ext ? `.${ext}` : 'Extensionless'} files not yet supported`)
         }
       }
     })
@@ -842,7 +826,9 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
         </div>
         <div className="flex-1 min-w-0">
           <AnimatePresence mode="wait">
-            {showMainLoading ? (
+            {loadError && documents.length === 0 ? (
+              <DocumentsLoadError key="load-error" onRetry={refetchDocuments} />
+            ) : showMainLoading ? (
               <motion.div
                 key="loading"
                 initial={{ opacity: 0 }}

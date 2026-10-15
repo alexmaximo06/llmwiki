@@ -59,26 +59,26 @@ def chunk_text(
 
     for para in paragraphs:
         para_tokens = _estimate_tokens(para)
+        breadcrumb = " > ".join(t for _, t in header_stack)
 
-        m = HEADER_RE.match(para)
-        if m:
-            level = len(m.group(1))
-            heading = m.group(2).strip()
-            header_stack = [(lvl, t) for lvl, t in header_stack if lvl < level]
+        header_match = HEADER_RE.match(para)
+        if header_match:
+            level = len(header_match.group(1))
+            heading = header_match.group(2).strip()
+            header_stack = [(existing_level, t) for existing_level, t in header_stack if existing_level < level]
             header_stack.append((level, heading))
 
-        if current_tokens + para_tokens > chunk_size and current_blocks:
-            text = "\n\n".join(current_blocks)
-            if _estimate_tokens(text) >= MIN_CHUNK_TOKENS:
-                breadcrumb = " > ".join(t for _, t in header_stack)
-                chunks.append(Chunk(
-                    index=len(chunks),
-                    content=text,
-                    page=page,
-                    start_char=current_start,
-                    token_count=_estimate_tokens(text),
-                    header_breadcrumb=breadcrumb,
-                ))
+        pending_text = "\n\n".join(current_blocks)
+        if current_tokens + para_tokens > chunk_size and _estimate_tokens(pending_text) >= MIN_CHUNK_TOKENS:
+            chunks.append(Chunk(
+                index=len(chunks),
+                content=pending_text,
+                page=page,
+                start_char=current_start,
+                token_count=_estimate_tokens(pending_text),
+                header_breadcrumb=breadcrumb,
+            ))
+
             overlap_blocks, overlap_tokens = _get_overlap(current_blocks, overlap)
             current_blocks = overlap_blocks
             current_tokens = overlap_tokens
@@ -89,17 +89,15 @@ def chunk_text(
         char_pos += len(para) + 2
 
     if current_blocks:
-        text = "\n\n".join(current_blocks)
-        if _estimate_tokens(text) >= MIN_CHUNK_TOKENS:
-            breadcrumb = " > ".join(t for _, t in header_stack)
-            chunks.append(Chunk(
-                index=len(chunks),
-                content=text,
-                page=page,
-                start_char=current_start,
-                token_count=_estimate_tokens(text),
-                header_breadcrumb=breadcrumb,
-            ))
+        final_text = "\n\n".join(current_blocks)
+        chunks.append(Chunk(
+            index=len(chunks),
+            content=final_text,
+            page=page,
+            start_char=current_start,
+            token_count=_estimate_tokens(final_text),
+            header_breadcrumb=" > ".join(t for _, t in header_stack),
+        ))
 
     return _enforce_max_chars(chunks)
 

@@ -229,8 +229,9 @@ async def test_office_with_mistral_backend_and_converter_uses_extract(monkeypatc
     assert calls[0][0] == "https://converter.test/extract"
     assert calls[0][1]["source_url"] == "https://s3.local/get/user-a%2Fdoc-a%2Fsource.docx"
     assert calls[0][1]["source_ext"] == "docx"
+    assert calls[0][1]["pdf_upload_url"] == "https://s3.local/put/user-a%2Fdoc-a%2Fconverted.pdf"
     assert stored == [("doc-a", "kb-a", [(1, "office md")], "libreoffice+opendataloader")]
-    assert s3.presigned_put_calls == []
+    assert s3.presigned_put_calls == [("user-a/doc-a/converted.pdf", "application/pdf", 3600)]
 
 
 async def test_converter_extract_retries_capacity_response(monkeypatch):

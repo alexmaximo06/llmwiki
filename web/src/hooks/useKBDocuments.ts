@@ -58,6 +58,7 @@ function mergePreservingIdentity(
 export function useKBDocuments(knowledgeBaseId: string) {
   const [documents, setDocuments] = React.useState<DocumentListItem[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [loadError, setLoadError] = React.useState<string | null>(null)
   const accessToken = useUserStore((s) => s.accessToken)
   const wsRef = React.useRef<WebSocket | null>(null)
   const reconnectTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -77,8 +78,10 @@ export function useKBDocuments(knowledgeBaseId: string) {
       // so without this merge the WS-triggered refetch would churn references
       // downstream and cause the active doc viewer to remount.
       setDocuments((prev) => mergePreservingIdentity(prev, data))
+      setLoadError(null)
     } catch (err) {
       console.error('Failed to load documents:', err)
+      setLoadError(err instanceof Error ? err.message : 'Failed to load documents')
     }
   }, [knowledgeBaseId, accessToken])
 
@@ -94,6 +97,7 @@ export function useKBDocuments(knowledgeBaseId: string) {
     }
 
     setDocuments([])
+    setLoadError(null)
     setLoading(true)
   }, [knowledgeBaseId])
 
@@ -193,5 +197,5 @@ export function useKBDocuments(knowledgeBaseId: string) {
     fetchDocs()
   }, [fetchDocs])
 
-  return { documents, setDocuments, loading, refetchDocuments }
+  return { documents, setDocuments, loading, loadError, refetchDocuments }
 }

@@ -8,6 +8,7 @@ import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { KBSidenav } from '@/components/kb/KBSidenav'
 import { PlanProgress } from '@/components/kb/PlanProgress'
 import { RecentChanges } from '@/components/kb/RecentChanges'
+import { DocumentsLoadError } from '@/components/kb/DocumentsLoadError'
 import { openMcpConnectionDock } from '@/components/connections/McpConnectionDock'
 import { WikiContent } from '@/components/wiki/WikiContent'
 import { useKBDocuments } from '@/hooks/useKBDocuments'
@@ -15,7 +16,7 @@ import { apiFetch } from '@/lib/api'
 import { useUserStore } from '@/stores'
 import type { DocumentListItem, WikiNode } from '@/lib/types'
 import {
-  enrichTreeWithProgress, findCurrentLesson, flattenLessons, flattenPages, lessonStatus,
+  enrichTreeWithProgress, findCurrentLesson, flattenLessons, flattenPages, lessonStatus, resolveWikiHref,
 } from '@/lib/wikiTree'
 import { isOwnWrite } from '@/lib/highlights/ownWrites'
 import { parsePlanTasks, type PlanSummary } from '@/lib/planTasks'
@@ -143,7 +144,7 @@ export function WikiOnlyDetail({
   const router = useRouter()
   const searchParams = useSearchParams()
   const token = useUserStore((s) => s.accessToken)
-  const { documents, setDocuments, loading } = useKBDocuments(kbId)
+  const { documents, setDocuments, loading, loadError, refetchDocuments } = useKBDocuments(kbId)
   const [filesNavPending, setFilesNavPending] = React.useState(false)
   const courseMode = kbKind === 'course'
   const { markComplete } = useCourseProgress(setDocuments)
@@ -429,24 +430,7 @@ export function WikiOnlyDetail({
 
   const handleWikiNavigate = React.useCallback(
     (path: string) => {
-      let nextPath = path
-      if (path.startsWith('/wiki/')) {
-        nextPath = path.replace(/^\/wiki\/?/, '')
-      } else if (path.startsWith('/')) {
-        nextPath = path.slice(1)
-      } else if (!wikiPathSet.has(path) && wikiActivePath) {
-        const dir = wikiActivePath.includes('/')
-          ? wikiActivePath.substring(0, wikiActivePath.lastIndexOf('/'))
-          : ''
-        let resolved = path.startsWith('./')
-          ? (dir ? dir + '/' : '') + path.slice(2)
-          : (dir ? dir + '/' : '') + path
-        while (resolved.includes('../')) {
-          resolved = resolved.replace(/[^/]*\/\.\.\//, '')
-        }
-        nextPath = resolved
-      }
-      handleWikiSelect(nextPath)
+      handleWikiSelect(resolveWikiHref(path, wikiActivePath, wikiPathSet))
     },
     [handleWikiSelect, wikiActivePath, wikiPathSet],
   )
@@ -548,7 +532,9 @@ export function WikiOnlyDetail({
           />
         </div>
         <div className="min-w-0 flex-1">
-          {showMainLoading || pageLoading ? (
+          {loadError && documents.length === 0 ? (
+            <DocumentsLoadError onRetry={refetchDocuments} />
+          ) : showMainLoading || pageLoading ? (
             <div className="flex h-full items-center justify-center">
               <Loader2 className="size-5 animate-spin text-muted-foreground" />
             </div>

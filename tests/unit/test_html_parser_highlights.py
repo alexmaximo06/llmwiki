@@ -679,10 +679,18 @@ async def test_hosted_webclip_records_storage_size_for_markdown_artifact(monkeyp
         async def upload_bytes(self, key, data, content_type):
             return None
 
+    stored_chunks: list = []
+
+    async def record_chunks(conn, document_id, user_id, kb_id, chunks):
+        stored_chunks.extend(chunks)
+
+    monkeypatch.setattr("services.hosted.store_chunks", record_chunks)
+
     pool = FakePool()
     service = HostedDocumentService(pool=pool, user_id="user-a", s3=FakeS3())
     await service.create_web_clip("kb-a", "https://example.com", "Title", "<p>Hello</p>")
 
+    assert [c.content for c in stored_chunks] == ["Hello"]
     assert pool.conn.insert_args is not None
     assert pool.conn.insert_args[4] == "/webclipper/"
     file_size = pool.conn.insert_args[6]

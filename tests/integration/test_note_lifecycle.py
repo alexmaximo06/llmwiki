@@ -208,6 +208,28 @@ class TestUpdateContent:
         assert len(new_chunks) >= 1
         assert new_chunks[0]["content"] != old_chunks[0]["content"]
 
+    async def test_content_edit_keeps_highlight_comments_searchable(self, client, pool):
+        headers = auth_headers(USER_ID)
+        body = "The mitochondria is the powerhouse of the cell. " * 10
+        doc_id = (await client.post(
+            f"/v1/knowledge-bases/{KB_ID}/documents/note",
+            headers=headers,
+            json={"filename": "bio.md", "content": body},
+        )).json()["id"]
+        await pool.execute(
+            "UPDATE documents SET highlights = $1::jsonb WHERE id = $2",
+            '[{"id": "h1", "type": "text", "comment": "ask about ATP", '
+            '"textAnchor": {"textContent": "powerhouse of the cell"}}]',
+            doc_id,
+        )
+
+        await client.put(f"/v1/documents/{doc_id}/content", headers=headers, json={"content": body + "\n\nMore."})
+
+        annotations = await pool.fetch(
+            "SELECT annotations_text FROM document_chunks WHERE document_id = $1 AND has_highlight", doc_id,
+        )
+        assert any("ask about ATP" in (r["annotations_text"] or "") for r in annotations)
+
     async def test_clearing_content_removes_chunks(self, client, pool):
         headers = auth_headers(USER_ID)
         create_resp = await client.post(
@@ -299,6 +321,33 @@ class TestUpdateMetadata:
             "source_url": "https://example.com",
             "course": {"status": "complete"},
         }
+
+    async def test_patch_can_clear_tags_date_and_properties(self, client):
+        headers = auth_headers(USER_ID)
+        create_resp = await client.post(
+            f"/v1/knowledge-bases/{KB_ID}/documents/note",
+            headers=headers,
+            json={"filename": "clear.md", "content": "x " * 70},
+        )
+        doc_id = create_resp.json()["id"]
+        await client.patch(
+            f"/v1/documents/{doc_id}",
+            headers=headers,
+            json={"tags": ["a"], "date": "2026-10-01", "metadata": {"properties": {"k": "v"}, "course": {"s": 1}}},
+        )
+
+        resp = await client.patch(
+            f"/v1/documents/{doc_id}",
+            headers=headers,
+            json={"title": None, "tags": None, "date": None, "metadata": {"properties": {}}},
+        )
+
+        body = resp.json()
+        assert resp.status_code == 200
+        assert body["tags"] == []
+        assert body["date"] is None
+        assert body["metadata"] == {"properties": {}, "course": {"s": 1}}
+        assert body["title"] == "Clear"
 
     async def test_empty_patch_rejected(self, client):
         headers = auth_headers(USER_ID)
@@ -477,11 +526,18 @@ class TestWebClipReclip:
 
         r1 = await client.post(f"/v1/knowledge-bases/{KB_ID}/documents/web", headers=headers, json=body)
         assert r1.status_code == 201
+        await pool.execute(
+            "UPDATE documents SET metadata = metadata || '{\"course\": {\"status\": \"complete\"}}'::jsonb WHERE id = $1",
+            r1.json()["id"],
+        )
 
         # Re-clipping the same URL must update, not 500 on the asset unique index.
         r2 = await client.post(f"/v1/knowledge-bases/{KB_ID}/documents/web", headers=headers, json=body)
         assert r2.status_code == 201
         assert r2.json()["id"] == r1.json()["id"]
+        metadata = json.loads(await pool.fetchval("SELECT metadata FROM documents WHERE id = $1", r1.json()["id"]))
+        assert metadata["course"] == {"status": "complete"}
+        assert metadata["source_url"] == "https://example.com/reclip"
 
         # Old asset cleared, new one inserted — exactly one asset doc remains.
         asset_count = await pool.fetchval(

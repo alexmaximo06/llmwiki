@@ -54,3 +54,13 @@ def test_extract_references_matches_hyphenated_version_source():
     )
 
     assert edges == [{"target_id": "source-1", "type": "cites", "page": 5}]
+
+
+def test_named_footnotes_become_citation_edges():
+    module = _references_module()
+    paper = {"id": "paper-id"}
+    content = "Claim.[^smith2020]\n\n[^smith2020]: paper.pdf, p.3\n[^1]: paper.pdf, p.4"
+
+    edges = module.extract_references(content, "page-id", "/wiki/", {"paper.pdf": paper}, {}, {})
+
+    assert edges == [{"target_id": "paper-id", "type": "cites", "page": 3}]

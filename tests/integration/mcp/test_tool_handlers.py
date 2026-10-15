@@ -187,6 +187,95 @@ class TestWriteReadFlow:
         assert "read-only" in await writer.append("/paper.pdf", "more")
         assert (workspace / "paper.pdf").read_bytes() == b"%PDF-1.7 original bytes"
 
+    async def test_edit_keeps_app_metadata_and_tracks_frontmatter_description(self, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+        from vaultfs.sqlite import SqliteVaultFS
+
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        page = "---\ndescription: First take\n---\n# Lesson\n\nBody text."
+        await writer.create("/wiki/", "Lesson", page, ["course"], "", False)
+        db = SqliteVaultFS._db_or_raise()
+        await db.execute(
+            "UPDATE documents SET metadata = json_set(metadata, '$.course', json('{\"status\":\"complete\"}'), "
+            "'$.source_url', 'https://example.com') WHERE filename = 'lesson.md'",
+        )
+        await db.commit()
+
+        await writer.edit("/wiki/lesson.md", "description: First take\n", "")
+
+        cursor = await db.execute("SELECT metadata FROM documents WHERE filename = 'lesson.md'")
+        metadata = json.loads((await cursor.fetchone())[0])
+        assert metadata["course"] == {"status": "complete"}
+        assert metadata["source_url"] == "https://example.com"
+        assert "description" not in metadata
+
+    async def test_create_refuses_unindexed_files_and_hidden_folders(self, workspace, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        (workspace / "notes").mkdir()
+        (workspace / "notes" / "plan.md").write_text("my own file")
+
+        clobber = await writer.create("/notes/", "Plan", "agent text", ["x"], "", False)
+        hidden = await writer.create("/.claude/", "settings.json", '{"hooks": {}}', ["x"], "", False)
+
+        assert "already exists on disk" in clobber
+        assert (workspace / "notes" / "plan.md").read_text() == "my own file"
+        assert "not writable" in hidden
+        assert not (workspace / ".claude").exists()
+
+    async def test_create_uses_the_filename_given_in_path(self, workspace, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        result = await writer.create("wiki/concepts/attention.md", "Attention Mechanisms", "# Attention", ["ml"], "", False)
+
+        assert "`/wiki/concepts/attention.md`" in result
+        assert (workspace / "wiki" / "concepts" / "attention.md").exists()
+        doc = await instance.get_document(kb_id, "attention.md", "/wiki/concepts/")
+        assert doc["title"] == "Attention Mechanisms"
+
+    async def test_create_keeps_an_explicit_filename_verbatim(self, workspace, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        await writer.create("/notes/README.txt", "Readme", "plain text", ["x"], "", False)
+
+        assert (workspace / "notes" / "README.txt").read_text().endswith("plain text")
+        doc = await instance.get_document(kb_id, "README.txt", "/notes/")
+        assert doc["file_type"] == "txt"
+
+    async def test_edit_clears_the_pages_stale_flag(self, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+        from vaultfs.sqlite import SqliteVaultFS
+
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        await writer.create("/wiki/", "Topic", "# Topic\n\nOld claim.", ["x"], "", False)
+        db = SqliteVaultFS._db_or_raise()
+        await db.execute("UPDATE documents SET stale_since = datetime('now') WHERE filename = 'topic.md'")
+        await db.commit()
+
+        await writer.edit("/wiki/topic.md", "Old claim.", "New claim.")
+
+        cursor = await db.execute("SELECT stale_since FROM documents WHERE filename = 'topic.md'")
+        assert (await cursor.fetchone())[0] is None
+
+    async def test_named_footnote_citations_become_graph_edges(self, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+
+        source = await instance.create_document(kb_id, "paper.pdf", "Paper", "/", "pdf", "", ["source"])
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        await writer.create("/wiki/", "Findings", "# Findings\n\nClaim.[^smith2020]\n\n[^smith2020]: paper.pdf, p.3", ["x"], "", False)
+
+        backlinks = await instance.get_backlinks(str(source["id"]))
+        assert [b["reference_type"] for b in backlinks] == ["cites"]
+
     async def test_edit_rejects_no_match(self, fs):
         instance, kb_id = fs
         from tools.write import WriteHandler
@@ -672,6 +761,32 @@ class TestReadModes:
         result = await reader.read("report.pdf", "1-2", None, False)
         assert "Page one content" in result
         assert "Page two content" in result
+
+    async def test_read_pages_returns_extracted_page_images(self, workspace, fs, insert_page):
+        instance, kb_id = fs
+        from tools.read import ReadHandler
+        from vaultfs.sqlite import SqliteVaultFS
+
+        png = b"\x89PNG\r\n\x1a\nfake-image-bytes"
+        doc = await instance.create_document(kb_id, "paper.pdf", "Paper", "/", "pdf", "", ["source"])
+        asset = await instance.create_document(
+            kb_id, "page-001-image-01.png", "Figure", "/paper.assets/", "png", "", ["asset"],
+        )
+        (workspace / "paper.assets").mkdir()
+        (workspace / "paper.assets" / "page-001-image-01.png").write_bytes(png)
+        await insert_page(
+            str(doc["id"]), 1, "Figure 1 shows the result.",
+            {"images": [{"id": str(asset["id"]), "filename": "page-001-image-01.png"}]},
+        )
+        db = SqliteVaultFS._db_or_raise()
+        await db.execute("UPDATE documents SET page_count = 1 WHERE id = ?", (str(doc["id"]),))
+        await db.commit()
+
+        result = await ReadHandler(instance, _make_kb(kb_id)).read("paper.pdf", "1", None, True)
+
+        images = [block for block in result if getattr(block, "type", None) == "image"]
+        assert len(images) == 1
+        assert images[0].mimeType == "image/png"
 
     async def test_read_pages_materializes_only_selected_page_annotations(self, fs, insert_page):
         instance, kb_id = fs

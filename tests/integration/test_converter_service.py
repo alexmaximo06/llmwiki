@@ -220,6 +220,68 @@ async def test_office_file_converted_then_extracted(monkeypatch, converter_modul
     assert resp.json()["page_count"] == 1
 
 
+class _RecordingUploadClient(_FakeAsyncClient):
+    uploads: list[tuple[str, bytes, dict]] = []
+
+    async def put(self, url: str, content, headers: dict):
+        body = b"".join([chunk async for chunk in content])
+        _RecordingUploadClient.uploads.append((url, body, headers))
+
+        class _Ok:
+            def raise_for_status(self):
+                return None
+        return _Ok()
+
+
+async def test_office_pdf_rendition_is_uploaded_when_requested(monkeypatch, converter_module):
+    _install_mocks(monkeypatch, converter_module)
+    _RecordingUploadClient.uploads = []
+    monkeypatch.setattr(source_downloader.httpx, "AsyncClient", _RecordingUploadClient)
+
+    resp = await _post_extract(converter_module, {
+        "source_url": "https://bucket.s3.amazonaws.com/alpha.docx",
+        "source_ext": "docx",
+        "pdf_upload_url": "https://bucket.s3.amazonaws.com/u/d/converted.pdf?X-Amz-Signature=x",
+    })
+
+    assert resp.status_code == 200
+    [(url, body, headers)] = _RecordingUploadClient.uploads
+    assert url.startswith("https://bucket.s3.amazonaws.com/u/d/converted.pdf")
+    assert body == b"%PDF-1.4 fake"
+    assert headers["Content-Type"] == "application/pdf"
+
+
+class _FailingUploadClient(_FakeAsyncClient):
+    async def put(self, url: str, content, headers: dict):
+        import httpx
+        raise httpx.ConnectTimeout("s3 unreachable")
+
+
+async def test_failed_pdf_rendition_upload_fails_the_job(monkeypatch, converter_module):
+    _install_mocks(monkeypatch, converter_module)
+    monkeypatch.setattr(source_downloader.httpx, "AsyncClient", _FailingUploadClient)
+
+    resp = await _post_extract(converter_module, {
+        "source_url": "https://bucket.s3.amazonaws.com/alpha.docx",
+        "source_ext": "docx",
+        "pdf_upload_url": "https://bucket.s3.amazonaws.com/u/d/converted.pdf",
+    })
+
+    assert resp.status_code == 502
+
+
+async def test_pdf_upload_url_must_point_at_s3(monkeypatch, converter_module):
+    _install_mocks(monkeypatch, converter_module)
+
+    resp = await _post_extract(converter_module, {
+        "source_url": "https://bucket.s3.amazonaws.com/alpha.docx",
+        "source_ext": "docx",
+        "pdf_upload_url": "https://attacker.example/exfil",
+    })
+
+    assert resp.status_code == 400
+
+
 async def test_malicious_page_count_is_clamped(monkeypatch, converter_module):
     """A crafted `number of pages` must not drive an unbounded assembly loop."""
     _install_mocks(monkeypatch, converter_module, page_payload={

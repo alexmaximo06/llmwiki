@@ -77,8 +77,8 @@ def _service(ocr, filename: str | None):
 
 
 def _fake_extract(calls: list):
-    async def extract(source_url: str, ext: str) -> ConverterExtraction:
-        calls.append((source_url, ext))
+    async def extract(source_url: str, ext: str, pdf_upload_url: str | None = None) -> ConverterExtraction:
+        calls.append((source_url, ext) if pdf_upload_url is None else (source_url, ext, pdf_upload_url))
         return ConverterExtraction(pages=[(1, "md")], engine="pdf-inspector")
     return extract
 
@@ -111,7 +111,11 @@ async def test_office_routes_to_converter_with_libreoffice_prefix(ocr, monkeypat
 
     await service.process_document(DOC, USER)
 
-    assert extract_calls == [(f"https://s3.local/get/{USER}%2F{DOC}%2Fsource.pptx", "pptx")]
+    assert extract_calls == [(
+        f"https://s3.local/get/{USER}%2F{DOC}%2Fsource.pptx",
+        "pptx",
+        f"https://s3.local/put/{USER}%2F{DOC}%2Fconverted.pdf",
+    )]
     assert stored[0][0][4] == "libreoffice+pdf-inspector"
     assert pool.failure() is None
 

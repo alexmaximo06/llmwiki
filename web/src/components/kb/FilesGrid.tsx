@@ -17,7 +17,10 @@ import {
   DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub,
   DropdownMenuSubTrigger, DropdownMenuSubContent,
 } from '@/components/ui/dropdown-menu'
+import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { apiFetch } from '@/lib/api'
+import { useUserStore } from '@/stores'
 import { NoteEditor } from '@/components/editor/NoteEditor'
 import { NoteFormattingButtons } from '@/components/editor/NoteToolbar'
 import type { Editor } from '@tiptap/react'
@@ -260,6 +263,15 @@ export function FilesGrid({
     setDocInitialPage(undefined)
     onDocOpen?.(doc.document_number)
   }, [onDocOpen])
+
+  const downloadDoc = React.useCallback(async (docId: string) => {
+    try {
+      const { url } = await apiFetch<{ url: string }>(`/v1/documents/${docId}/url`, useUserStore.getState().accessToken ?? '')
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Download failed')
+    }
+  }, [])
 
   const closeDoc = React.useCallback(() => {
     setActiveDocId(null)
@@ -583,9 +595,9 @@ export function FilesGrid({
             <button onClick={() => { /* TODO: trigger search in PDF viewer */ }} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title="Find in document">
               <Search className="size-3.5" />
             </button>
-            <a href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/v1/documents/${activeDoc.id}/download`} download className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title="Download">
+            <button onClick={() => downloadDoc(activeDoc.id)} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title="Download" aria-label="Download">
               <Download className="size-3.5" />
-            </a>
+            </button>
             <button onClick={closeDoc} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title="Close">
               <X className="size-3.5" />
             </button>

@@ -315,9 +315,9 @@ class ReadHandler:
                 img_id = img_meta.get("id")
                 if not img_id:
                     continue
-                img_bytes = await self.fs.load_image_bytes(doc_id, img_id)
+                img_bytes = await self.fs.load_asset_bytes(img_id)
                 if img_bytes:
-                    fmt = "jpeg" if img_id.endswith((".jpg", ".jpeg")) else "png"
+                    fmt = "jpeg" if str(img_meta.get("filename", "")).endswith((".jpg", ".jpeg")) else "png"
                     content_blocks.append(_image(img_bytes, fmt))
                     has_images = True
 

@@ -65,7 +65,7 @@ def _serialized(method):
         async with _write_lock:
             try:
                 return await method(self, *args, **kwargs)
-            except Exception:
+            except BaseException:  # includes cancellation: never release the lock with a transaction open
                 with suppress(Exception):
                     await self._db.rollback()
                 raise
@@ -171,7 +171,7 @@ class SQLiteDocumentRepository:
     async def update_content(self, doc_id: str, user_id: str, content: str) -> dict | None:
         cursor = await self._db.execute(
             "UPDATE documents SET content = ?, file_size = ?, version = version + 1, "
-            "updated_at = datetime('now') WHERE id = ? "
+            "updated_at = datetime('now'), stale_since = NULL WHERE id = ? "
             "RETURNING id, content, version",
             (content, len(content.encode("utf-8")), doc_id),
         )
@@ -181,6 +181,9 @@ class SQLiteDocumentRepository:
 
     @_serialized
     async def update_metadata(self, doc_id: str, user_id: str, **fields) -> dict | None:
+        if "metadata" in fields:
+            # Read-modify-write: hold the write lock across processes (the MCP server writes this file too).
+            await self._db.execute("BEGIN IMMEDIATE")
         updates = []
         params = []
         for key, value in fields.items():
@@ -188,8 +191,10 @@ class SQLiteDocumentRepository:
                 updates.append("tags = ?")
                 params.append(json.dumps(value))
             elif key == "metadata":
-                updates.append("metadata = json_patch(COALESCE(metadata, '{}'), ?)")
-                params.append(json.dumps(value))
+                current = await self.get(doc_id)
+                existing = current["metadata"] if current and isinstance(current["metadata"], dict) else {}
+                updates.append("metadata = ?")
+                params.append(json.dumps({**existing, **value}))
             else:
                 updates.append(f"{key} = ?")
                 params.append(value)
@@ -423,6 +428,15 @@ class SQLiteDocumentRepository:
             with suppress(Exception):
                 await self._db.rollback()
             raise
+
+    @_serialized
+    async def reapply_highlights(self, doc_id: str) -> None:
+        """Re-materialize stored highlight annotations onto freshly rebuilt chunks."""
+        current = await self.get_highlights(doc_id)
+        if not current or not current["highlights"]:
+            return
+        await self._recompute_chunks_for_doc(doc_id, [], current["highlights"])
+        await self._db.commit()
 
     async def _recompute_chunks_for_doc(
         self, doc_id: str,

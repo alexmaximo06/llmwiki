@@ -192,7 +192,7 @@ async def update_document_metadata(
     body: UpdateMetadata,
     service: Annotated[DocumentService, Depends(get_document_service)],
 ):
-    fields = {k: v for k, v in body.model_dump().items() if v is not None}
+    fields = body.changed_fields()
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
     row = await service.update_metadata(str(doc_id), fields)

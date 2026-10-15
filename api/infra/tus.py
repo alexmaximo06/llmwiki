@@ -75,7 +75,6 @@ _FILE_SIGNATURES: dict[str, tuple[tuple[bytes, ...], ...]] = {
     "xlsx": ((b"PK\x03\x04",),),
     "ppt":  ((b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),),
     "doc":  ((b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),),
-    "xls":  ((b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),),
     # CSV and HTML are text — no reliable magic bytes. Skip the strict check
     # for these; the parser layer is more forgiving and they're low-risk.
 }
@@ -117,7 +116,7 @@ ALLOWED_EXTENSIONS = {
     ".docx": "docx", ".doc": "doc",
     ".png": "png", ".jpg": "jpg", ".jpeg": "jpeg",
     ".webp": "webp", ".gif": "gif",
-    ".xlsx": "xlsx", ".xls": "xls", ".csv": "csv",
+    ".xlsx": "xlsx", ".csv": "csv",
     ".html": "html", ".htm": "html",
 }
 CONTENT_TYPES = {
@@ -129,7 +128,7 @@ CONTENT_TYPES = {
     "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
     "webp": "image/webp", "gif": "image/gif",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "xls": "application/vnd.ms-excel", "csv": "text/csv",
+    "csv": "text/csv",
     "html": "text/html", "htm": "text/html",
 }
 

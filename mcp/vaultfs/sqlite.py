@@ -50,6 +50,11 @@ No sources ingested yet - add your first source to get started.\
 """
 
 
+def _fts5_keywords(query: str) -> str:
+    """Quote each term so user text is matched as plain keywords (all must match), never parsed as FTS5 syntax."""
+    return " ".join('"' + term.replace('"', '""') + '"' for term in query.split())
+
+
 def _rows_to_dicts(cursor: aiosqlite.Cursor, rows: list[tuple]) -> list[dict]:
     cols = [d[0] for d in cursor.description]
     results = []
@@ -273,6 +278,7 @@ class SqliteVaultFS(VaultFS):
             "file_size = ?",
             "version = COALESCE(version, 0) + 1",
             "updated_at = datetime('now')",
+            "stale_since = NULL",
         ]
         args: list = [content, len(content.encode("utf-8"))]
 
@@ -286,7 +292,7 @@ class SqliteVaultFS(VaultFS):
             sets.append("date = ?")
             args.append(date)
         if metadata is not None:
-            sets.append("metadata = ?")
+            sets.append("metadata = json_patch(json_remove(COALESCE(metadata, '{}'), '$.description'), ?)")
             args.append(json.dumps(metadata))
 
         args.append(doc_id)
@@ -447,6 +453,9 @@ class SqliteVaultFS(VaultFS):
         annotated_only: bool = False,
         scope: str = "all",
     ) -> list[dict]:
+        fts_query = _fts5_keywords(query)
+        if not fts_query:
+            return []
         db = self._db_or_raise()
         # SQLite's chunks_fts only indexes `content` (which already includes
         # annotations after sync). Scope filtering is a Python-side
@@ -465,7 +474,7 @@ class SqliteVaultFS(VaultFS):
             "JOIN documents d ON dc.document_id = d.id "
             "WHERE chunks_fts MATCH ? AND d.status != 'failed' "
         )
-        params: list = [query]
+        params: list = [fts_query]
         if annotated_only:
             sql += "AND dc.has_highlight = 1 "
         if path_filter == "wiki":
@@ -502,9 +511,6 @@ class SqliteVaultFS(VaultFS):
         relative = doc.get("relative_path") or (doc["path"].rstrip("/") + "/" + doc["filename"]).lstrip("/")
         return self._load_local_bytes(relative)
 
-    async def load_image_bytes(self, doc_id: str, image_id: str) -> bytes | None:
-        return self._load_local_bytes(f"local/{doc_id}/images/{image_id}")
-
     async def load_asset_bytes(self, asset_doc_id: str) -> bytes | None:
         db = self._db_or_raise()
         cursor = await db.execute(
@@ -528,12 +534,17 @@ class SqliteVaultFS(VaultFS):
         return None
 
 
-    def write_to_disk(self, dir_path: str, filename: str, content: str) -> bool:
-        file_path = self._resolve_path(dir_path.lstrip("/") + filename)
+    def write_to_disk(self, dir_path: str, filename: str, content: str, *, exclusive: bool = False) -> bool:
+        """Write a document's file; exclusive refuses to replace anything already on disk (raises FileExistsError)."""
+        relative = dir_path.lstrip("/") + filename
+        if any(part.startswith(".") for part in relative.split("/")):
+            return False
+        file_path = self._resolve_path(relative)
         if not file_path:
             return False
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(content, encoding="utf-8")
+        with file_path.open("x" if exclusive else "w", encoding="utf-8") as f:
+            f.write(content)
         return True
 
     def delete_from_disk(self, docs: list[dict]) -> None:

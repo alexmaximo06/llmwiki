@@ -15,6 +15,7 @@ from converter.models import ExtractRequest
 from converter.office_pdf_converter import OfficePdfConverter
 from converter.opendataloader_engine import OpendataloaderEngine
 from converter.pdf_inspector_engine import PdfInspectorEngine
+from converter.pdf_uploader import PdfUploader
 from converter.s3_url_validator import S3UrlValidator
 from converter.source_downloader import SourceDownloader
 
@@ -28,6 +29,7 @@ class ExtractionService:
         self._url_validator = S3UrlValidator(config.s3_bucket, config.s3_region)
         self._downloader = SourceDownloader(config.max_source_bytes)
         self._office_converter = OfficePdfConverter(config)
+        self._pdf_uploader = PdfUploader()
         self._engine = self._build_engine(config)
 
     async def extract(self, request: ExtractRequest) -> dict:
@@ -35,11 +37,13 @@ class ExtractionService:
         if ext not in SUPPORTED_EXTENSIONS:
             raise HTTPException(400, f"Unsupported extension: {ext}")
         self._url_validator.validate(request.source_url)
+        if request.pdf_upload_url:
+            self._url_validator.validate(request.pdf_upload_url)
 
         request_id = request.request_id or "none"
         with self._slots.acquire():
             logger.info("extract start: ext=%s active=%d request_id=%s", ext, self._slots.active, request_id)
-            pages = await self._extract_from_source(request.source_url, ext, request_id)
+            pages = await self._extract_from_source(request, ext, request_id)
 
         logger.info(
             "extract done: ext=%s engine=%s pages=%d request_id=%s",
@@ -47,12 +51,14 @@ class ExtractionService:
         )
         return self._build_response(request, pages)
 
-    async def _extract_from_source(self, source_url: str, ext: str, request_id: str) -> list[dict]:
+    async def _extract_from_source(self, request: ExtractRequest, ext: str, request_id: str) -> list[dict]:
         try:
             with tempfile.TemporaryDirectory(dir="/tmp/conversions") as tmpdir:
                 source_path = Path(tmpdir) / f"source.{ext}"
-                await self._downloader.download(source_url, source_path, request_id)
+                await self._downloader.download(request.source_url, source_path, request_id)
                 pdf_path = await self._to_pdf(source_path, ext, tmpdir, request_id)
+                if ext in OFFICE_EXTENSIONS and request.pdf_upload_url:
+                    await self._pdf_uploader.upload(request.pdf_upload_url, pdf_path, request_id)
                 return await self._run_extraction(pdf_path, tmpdir, request_id)
         except HTTPException:
             raise

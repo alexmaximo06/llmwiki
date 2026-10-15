@@ -22,10 +22,12 @@ class ConverterClient:
     def __init__(self) -> None:
         self._semaphore = asyncio.Semaphore(self.MAX_CONCURRENT_REQUESTS)
 
-    async def extract(self, source_url: str, ext: str) -> ConverterExtraction:
-        """Fetch per-page markdown for a source file, verifying the request_id echo."""
+    async def extract(self, source_url: str, ext: str, pdf_upload_url: str | None = None) -> ConverterExtraction:
+        """Fetch per-page markdown for a source file (optionally storing its PDF rendition), verifying the request_id echo."""
         request_id = str(uuid.uuid4())
         payload = {"source_url": source_url, "source_ext": ext, "request_id": request_id}
+        if pdf_upload_url:
+            payload["pdf_upload_url"] = pdf_upload_url
         async with (
             self._semaphore,
             httpx.AsyncClient(timeout=httpx.Timeout(300.0, connect=10.0)) as client,

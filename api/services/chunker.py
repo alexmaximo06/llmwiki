@@ -56,6 +56,7 @@ def chunk_text(
 
     for para in paragraphs:
         para_tokens = _estimate_tokens(para)
+        breadcrumb = " > ".join(t for _, t in header_stack)
 
         header_match = HEADER_RE.match(para)
         if header_match:
@@ -64,18 +65,16 @@ def chunk_text(
             header_stack = [(existing_level, t) for existing_level, t in header_stack if existing_level < level]
             header_stack.append((level, heading))
 
-        if current_tokens + para_tokens > chunk_size and current_blocks:
-            chunk_text_str = "\n\n".join(current_blocks)
-            if _estimate_tokens(chunk_text_str) >= MIN_CHUNK_TOKENS:
-                breadcrumb = " > ".join(t for _, t in header_stack)
-                chunks.append(Chunk(
-                    index=len(chunks),
-                    content=chunk_text_str,
-                    page=page,
-                    start_char=current_start,
-                    token_count=_estimate_tokens(chunk_text_str),
-                    header_breadcrumb=breadcrumb,
-                ))
+        pending_text = "\n\n".join(current_blocks)
+        if current_tokens + para_tokens > chunk_size and _estimate_tokens(pending_text) >= MIN_CHUNK_TOKENS:
+            chunks.append(Chunk(
+                index=len(chunks),
+                content=pending_text,
+                page=page,
+                start_char=current_start,
+                token_count=_estimate_tokens(pending_text),
+                header_breadcrumb=breadcrumb,
+            ))
 
             overlap_blocks, overlap_tokens = _get_overlap(current_blocks, overlap)
             current_blocks = overlap_blocks
@@ -87,17 +86,15 @@ def chunk_text(
         char_pos += len(para) + 2
 
     if current_blocks:
-        chunk_text_str = "\n\n".join(current_blocks)
-        if _estimate_tokens(chunk_text_str) >= MIN_CHUNK_TOKENS:
-            breadcrumb = " > ".join(t for _, t in header_stack)
-            chunks.append(Chunk(
-                index=len(chunks),
-                content=chunk_text_str,
-                page=page,
-                start_char=current_start,
-                token_count=_estimate_tokens(chunk_text_str),
-                header_breadcrumb=breadcrumb,
-            ))
+        final_text = "\n\n".join(current_blocks)
+        chunks.append(Chunk(
+            index=len(chunks),
+            content=final_text,
+            page=page,
+            start_char=current_start,
+            token_count=_estimate_tokens(final_text),
+            header_breadcrumb=" > ".join(t for _, t in header_stack),
+        ))
 
     return _enforce_max_chars(chunks)
 

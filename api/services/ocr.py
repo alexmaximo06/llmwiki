@@ -66,7 +66,7 @@ class OCRService:
                 await self._process_pdf(document_id, user_id, kb_id, s3_source_key)
             elif ext in ("html", "htm"):
                 await self._process_html(document_id, user_id, kb_id, s3_source_key)
-            elif ext in ("xlsx", "xls", "csv"):
+            elif ext in ("xlsx", "csv"):
                 await self._process_spreadsheet(document_id, user_id, kb_id, s3_source_key, ext)
             else:
                 raise ValueError(f"Unsupported file type: {ext}")
@@ -103,7 +103,8 @@ class OCRService:
         """Office files go through the converter when available; local mode falls back to LibreOffice."""
         if settings.CONVERTER_URL:
             presigned_url = await self._s3.generate_presigned_get(s3_source_key)
-            extraction = await self._converter.extract(presigned_url, ext)
+            pdf_upload_url = await self._s3.generate_presigned_put(f"{user_id}/{document_id}/converted.pdf")
+            extraction = await self._converter.extract(presigned_url, ext, pdf_upload_url)
             await self._pages.store_extracted_pages(
                 document_id, user_id, kb_id, extraction.pages, f"libreoffice+{extraction.engine}",
             )

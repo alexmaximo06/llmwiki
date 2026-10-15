@@ -8,9 +8,9 @@ annotated-types==0.7.0 \
     --hash=sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53 \
     --hash=sha256:aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89
     # via pydantic
-anyio==4.13.0 \
-    --hash=sha256:08b310f9e24a9594186fd75b4f73f4a4152069e3853f1ed8bfbf58369f4ad708 \
-    --hash=sha256:334b70e641fd2221c1505b3890c69882fe4a2df910cba14d97019b90b24439dc
+anyio==4.14.2 \
+    --hash=sha256:9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494 \
+    --hash=sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f
     # via
     #   httpx
     #   starlette
@@ -98,6 +98,14 @@ idna==3.17 \
 opendataloader-pdf==2.3.0 \
     --hash=sha256:1a6245d3f774dab2414ae759b1fc04edfad2f6e17b3c9f9b386b74a58604e20d \
     --hash=sha256:4abb0737c70b6b6a42b04748945b598f3776d2af7bb26ed275ed1e1f26629ee2
+    # via -r requirements.txt
+pdf-inspector==1.14.0 \
+    --hash=sha256:3d6734bcbad3a94e4ee79e5526c305cf71ca6f25f42fd2eddc28a81298cc86cd \
+    --hash=sha256:6722bb57bd9b6ae8f299508f7f711262785b693f3f41edb962a1d8235f8352d1 \
+    --hash=sha256:7c586fb727bae496e5333f7c64e6ae203a46cbc3b46bf334bf4952f77a9e8603 \
+    --hash=sha256:80e1aef1d8c511c0a29c5739f6c5ab19f084c1c87bd629eb85ea1104f34101e8 \
+    --hash=sha256:df0470b38081d52bb110887cce7e0df3ef9f6af0389d47ea397386150e879c94 \
+    --hash=sha256:edbb5133d9d91c44247724c89e26c76b24b21610f664218b571d697d763758e9
     # via -r requirements.txt
 pydantic==2.13.4 \
     --hash=sha256:45a282cde31d808236fd7ea9d919b128653c8b38b393d1c4ab335c62924d9aba \

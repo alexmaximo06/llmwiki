@@ -5,6 +5,8 @@ Tests every VaultFS method. Self-contained — no Postgres needed.
 
 import uuid
 
+import pytest
+
 from tests.integration.mcp.conftest import TEST_USER_ID
 
 
@@ -325,6 +327,25 @@ class TestSearch:
         assert len(results) >= 1
         assert "hello" in results[0]["content"]
 
+    @pytest.mark.parametrize("query", [
+        "GPT-4", "state-of-the-art", "v1.2", "C++", "what is RLHF?", "O'Reilly", "note: x", 'unclosed "quote', "AND",
+    ])
+    async def test_search_chunks_treats_punctuation_as_plain_text(self, fs, insert_chunk, query):
+        instance, kb_id = fs
+        doc = await instance.create_document(kb_id, "models.md", "Models", "/", "md", "x", ["tag"])
+        await insert_chunk(str(doc["id"]), kb_id, "GPT-4 is state-of-the-art per O'Reilly v1.2 and C++ notes")
+
+        await instance.search_chunks(kb_id, query, 5)
+
+    async def test_search_chunks_matches_hyphenated_terms(self, fs, insert_chunk):
+        instance, kb_id = fs
+        doc = await instance.create_document(kb_id, "models.md", "Models", "/", "md", "x", ["tag"])
+        await insert_chunk(str(doc["id"]), kb_id, "GPT-4 is a large language model")
+
+        results = await instance.search_chunks(kb_id, "GPT-4 model", 5)
+
+        assert any("GPT-4" in r["content"] for r in results)
+
     async def test_search_chunks_respects_limit(self, fs, insert_chunk):
         instance, kb_id = fs
         for i in range(5):
@@ -369,10 +390,6 @@ class TestBytesAndDisk:
         doc = {"path": "/", "filename": "file.txt", "relative_path": "file.txt"}
         data = await instance.load_source_bytes(doc)
         assert data == b"workspace data"
-
-    async def test_load_image_bytes_returns_none(self, fs):
-        instance, _ = fs
-        assert await instance.load_image_bytes("doc-id", "img-id") is None
 
     async def test_write_to_disk_creates_file(self, fs, workspace):
         instance, _ = fs

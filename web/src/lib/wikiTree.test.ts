@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { enrichTreeWithProgress, flattenLessons, flattenPages } from './wikiTree'
+import { enrichTreeWithProgress, flattenLessons, flattenPages, resolveWikiHref } from './wikiTree'
 import type { DocumentListItem, WikiNode } from '@/lib/types'
 
 const tree: WikiNode[] = [
@@ -69,5 +69,25 @@ describe('enrichTreeWithProgress', () => {
     const lessons = flattenLessons(enrichTreeWithProgress(tree, docs))
     expect(lessons[0].locked).toBe(false)
     expect(lessons[1].locked).toBe(true)
+  })
+})
+
+describe('resolveWikiHref', () => {
+  const known = new Set(['overview.md', 'concepts/attention.md'])
+
+  it('climbs above the root without looping', () => {
+    expect(resolveWikiHref('../sources/a.md', 'overview.md', known)).toBe('sources/a.md')
+    expect(resolveWikiHref('../../x.md', 'concepts/attention.md', known)).toBe('x.md')
+  })
+
+  it('resolves sibling and nested relative links', () => {
+    expect(resolveWikiHref('./scaling.md', 'concepts/attention.md', known)).toBe('concepts/scaling.md')
+    expect(resolveWikiHref('../overview.md', 'concepts/attention.md', known)).toBe('overview.md')
+  })
+
+  it('handles wiki-absolute links, fragments and encoding', () => {
+    expect(resolveWikiHref('/wiki/concepts/attention.md#scaled', 'overview.md', known)).toBe('concepts/attention.md')
+    expect(resolveWikiHref('My%20Page.md', 'overview.md', known)).toBe('My Page.md')
+    expect(resolveWikiHref('concepts/attention.md', 'overview.md', known)).toBe('concepts/attention.md')
   })
 })

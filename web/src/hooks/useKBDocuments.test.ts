@@ -140,4 +140,20 @@ describe('useKBDocuments', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.documents[0].knowledge_base_id).toBe('kb-2')
   })
+
+  it('reports a failed load instead of looking like an empty wiki, and recovers on retry', async () => {
+    apiFetchMock.mockRejectedValueOnce(new Error('503 Service Unavailable'))
+    const { result } = renderHook(() => useKBDocuments('kb-1'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(result.current.loadError).toBe('503 Service Unavailable')
+    expect(result.current.documents).toEqual([])
+
+    apiFetchMock.mockResolvedValueOnce([documentItem('overview')])
+    await act(async () => {
+      result.current.refetchDocuments()
+    })
+
+    await waitFor(() => expect(result.current.loadError).toBeNull())
+    expect(result.current.documents).toHaveLength(1)
+  })
 })

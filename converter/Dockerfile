@@ -9,8 +9,10 @@ ENV JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 
 RUN useradd -m -s /bin/bash converter
 WORKDIR /app
-COPY requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir uv pip-audit
+COPY requirements.lock ./requirements.lock
+RUN uv pip install --system --require-hashes -r requirements.lock
+RUN pip-audit -r requirements.lock --strict --desc
 COPY . ./converter/
 
 RUN mkdir -p /tmp/conversions && chown converter:converter /tmp/conversions
