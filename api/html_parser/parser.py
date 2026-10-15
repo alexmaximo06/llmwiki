@@ -16,6 +16,9 @@ from .models import Element, Image, MappedHighlight, ParseResult, TextAnchor
 
 logger = logging.getLogger(__name__)
 
+MAX_TABLE_SPAN = 1000
+MAX_TABLE_CELLS = 100_000
+
 
 BLOCK_TAGS = {
     "div", "p", "h1", "h2", "h3", "h4", "h5", "h6",
@@ -283,9 +286,17 @@ class Parser:
         try:
             if not value:
                 return 1
-            return max(1, int(value))
+            return min(max(1, int(value)), MAX_TABLE_SPAN)
         except (ValueError, TypeError):
             return 1
+
+    @staticmethod
+    def _fill_span(grid: list[list[str | None]], row: int, col: int, span_rows: int, span_cols: int) -> None:
+        """Mark the cells covered by a row/col span (other than its anchor) as empty."""
+        for r in range(row, row + span_rows):
+            for c in range(col, col + span_cols):
+                if (r, c) != (row, col):
+                    grid[r][c] = ""
 
     _LAYOUT_BLOCK_TAGS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "div", "ul", "ol", "blockquote", "pre", "table", "br"}
 
@@ -317,9 +328,11 @@ class Parser:
         if not raw_rows:
             return ""
 
-        max_cols = max(sum(cs for _, _, cs in row) for row in raw_rows)
         num_rows = len(raw_rows)
+        widest_row = max(sum(cs for _, _, cs in row) for row in raw_rows)
+        max_cols = max(1, min(widest_row, MAX_TABLE_CELLS // num_rows))
         grid: list[list[str | None]] = [[None] * max_cols for _ in range(num_rows)]
+        span_budget = MAX_TABLE_CELLS
 
         for i, row in enumerate(raw_rows):
             col = 0
@@ -329,13 +342,11 @@ class Parser:
                 if col >= max_cols:
                     break
                 grid[i][col] = text
-                for r in range(rowspan):
-                    for c in range(colspan):
-                        if r == 0 and c == 0:
-                            continue
-                        ri, ci = i + r, col + c
-                        if ri < num_rows and ci < max_cols:
-                            grid[ri][ci] = ""
+                span_rows = min(rowspan, num_rows - i)
+                span_cols = min(colspan, max_cols - col)
+                if span_rows * span_cols <= span_budget:
+                    span_budget -= span_rows * span_cols
+                    self._fill_span(grid, i, col, span_rows, span_cols)
                 col += colspan
 
         for i in range(num_rows):

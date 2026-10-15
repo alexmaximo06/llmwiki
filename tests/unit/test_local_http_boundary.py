@@ -162,11 +162,16 @@ def test_cli_launches_api_on_ipv4_loopback(tmp_path, monkeypatch):
         launches.append(args)
         return _Process()
 
+    web_dir = tmp_path / "web"
+    (web_dir / "node_modules" / ".bin").mkdir(parents=True)
+    (web_dir / "node_modules" / ".bin" / "next").touch()
+
     monkeypatch.setattr(cli.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(cli.shutil, "which", lambda _name: "/usr/bin/npm")
+    monkeypatch.setattr(cli, "WEB_DIR", web_dir)
     monkeypatch.setattr(cli, "_supervise", lambda *_args: None)
 
     cli.cmd_serve(str(workspace), open_browser=False)
 
-    api_command = launches[0]
+    api_command, web_command = launches
     assert api_command[api_command.index("--host") + 1] == "127.0.0.1"
+    assert web_command[web_command.index("--hostname") + 1] == "127.0.0.1"

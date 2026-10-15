@@ -5,7 +5,7 @@ markdown lives in it as plain files, the SQLite index lives in `.llmwiki/` insid
 
 ```bash
 docker build -f docker/local/Dockerfile -t llmwiki .
-docker run -p 3000:3000 -v ~/my-wiki:/workspace llmwiki
+docker run -p 127.0.0.1:3000:3000 -v ~/my-wiki:/workspace llmwiki
 ```
 
 Open http://localhost:3000. First boot initializes the workspace (and indexes any
@@ -28,19 +28,21 @@ Networked MCP hosts connect to `http://localhost:3000/mcp` (streamable HTTP).
 For stdio hosts (Claude Desktop) against a source checkout, `./llmwiki mcp-config <workspace>`
 still prints the config snippet.
 
-The endpoint is unauthenticated, same as the rest of local mode — do not publish
-port 3000 beyond localhost or a trusted network.
+The endpoint is unauthenticated, same as the rest of local mode. Keep the port
+bound to `127.0.0.1` as shown; a bare `-p 3000:3000` publishes it to your whole network.
 
-## Access from another origin
+## Using a different port
 
 The API only accepts browser requests whose `Origin` matches `APP_URL`
-(default `http://localhost:3000`). If you serve the UI from a different host or
-port — a LAN address, a remapped `-p 8080:3000` — pass it explicitly:
+(default `http://localhost:3000`), and only loopback origins are allowed. To remap
+the port, pass the new loopback URL explicitly:
 
 ```bash
-docker run -p 8080:3000 -e APP_URL=http://192.168.1.20:8080 \
-  -e API_URL=http://192.168.1.20:8080/api -v ~/my-wiki:/workspace llmwiki
+docker run -p 127.0.0.1:8080:3000 -e APP_URL=http://localhost:8080 \
+  -e API_URL=http://localhost:8080/api -v ~/my-wiki:/workspace llmwiki
 ```
+
+The Chrome extension's local server URL is `http://localhost:3000/api` (or your remapped port).
 
 ## File ownership on Linux
 
@@ -48,7 +50,7 @@ The container runs as root, so files it creates in the bind mount are
 root-owned on Linux hosts. Run with your own uid to keep the workspace yours:
 
 ```bash
-docker run -u "$(id -u):$(id -g)" -p 3000:3000 -v ~/my-wiki:/workspace llmwiki
+docker run -u "$(id -u):$(id -g)" -p 127.0.0.1:3000:3000 -v ~/my-wiki:/workspace llmwiki
 ```
 
 ## Upgrading

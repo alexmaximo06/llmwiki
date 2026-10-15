@@ -189,18 +189,18 @@ class OCRService:
         html_bytes = await self._s3.download_bytes(s3_source_key)
         raw_html = html_bytes.decode("utf-8", errors="replace")
 
-        parser = Parser(raw_html, content_only=True)
-        result = parser.parse()
+        parser = await asyncio.to_thread(Parser, raw_html, content_only=True)
+        result = await asyncio.to_thread(parser.parse)
 
         await parser.embed_images()
-        tagged_html = parser.html(sanitize=True)
+        tagged_html = await asyncio.to_thread(parser.html, sanitize=True)
         await self._s3.upload_bytes(
             f"{user_id}/{document_id}/tagged.html",
             tagged_html.encode("utf-8"),
             "text/html",
         )
 
-        chunks = chunk_text(result.content)
+        chunks = await asyncio.to_thread(chunk_text, result.content)
         await self._pages.store_html(document_id, user_id, kb_id, result.content, chunks)
 
     # ── Spreadsheet processing ────────────────────────────────────────────

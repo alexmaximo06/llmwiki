@@ -4,37 +4,28 @@ import * as React from 'react'
 import { Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Loader2, Shield, Check, X } from 'lucide-react'
+import type { OAuthAuthorizationDetails } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 
-interface AuthorizationDetails {
-  client?: { name?: string }
-  scopes?: string[]
-}
-
-interface OAuthDecisionResult {
-  data?: { redirect_to?: string; redirect_uri?: string; url?: string } | null
-  error?: { message?: string } | null
-}
-
-interface OAuthDetailsResult {
-  data?: AuthorizationDetails | null
-  error?: { message?: string } | null
-}
-
-interface OAuthAuthClient {
-  oauth: {
-    getAuthorizationDetails: (id: string) => Promise<OAuthDetailsResult>
-    approveAuthorization: (id: string) => Promise<OAuthDecisionResult>
-    denyAuthorization: (id: string) => Promise<OAuthDecisionResult>
+function redirectHost(uri: string): string {
+  try {
+    return new URL(uri).host
+  } catch {
+    return uri
   }
+}
+
+function errorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message) return err.message
+  return fallback
 }
 
 function OAuthConsentContent() {
   const searchParams = useSearchParams()
   const authorizationId = searchParams.get('authorization_id')
 
-  const [details, setDetails] = React.useState<AuthorizationDetails | null>(null)
+  const [details, setDetails] = React.useState<OAuthAuthorizationDetails | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState<string | null>(null)
   const [submitting, setSubmitting] = React.useState(false)
@@ -48,7 +39,6 @@ function OAuthConsentContent() {
     }
 
     const supabase = createClient()
-    const auth = supabase.auth as unknown as OAuthAuthClient
 
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) {
@@ -58,56 +48,39 @@ function OAuthConsentContent() {
       }
 
       try {
-        const { data, error: fetchError } = await auth.oauth.getAuthorizationDetails(authorizationId)
+        const { data, error: fetchError } = await supabase.auth.oauth.getAuthorizationDetails(authorizationId)
         if (fetchError) throw fetchError
-        setDetails(data ?? null)
+        if ('redirect_url' in data) {
+          window.location.href = data.redirect_url
+          return
+        }
+        setDetails(data)
       } catch (err: unknown) {
         console.error('Failed to get authorization details:', err)
+        setError(errorMessage(err, 'Could not load this authorization request. Start the connection again from your AI client.'))
       } finally {
         setLoading(false)
       }
     })
   }, [authorizationId])
 
-  const handleApprove = async () => {
+  const handleDecision = async (approve: boolean) => {
     if (!authorizationId || submitting) return
     setSubmitting(true)
     setError(null)
     try {
-      const supabase = createClient()
-      const auth = supabase.auth as unknown as OAuthAuthClient
-      const result = await auth.oauth.approveAuthorization(authorizationId)
-      if (result.error) throw result.error
-      const redirectUrl = result.data?.redirect_to || result.data?.redirect_uri || result.data?.url
-      if (redirectUrl) {
-        window.location.href = redirectUrl
+      const oauth = createClient().auth.oauth
+      const { data, error: decisionError } = approve
+        ? await oauth.approveAuthorization(authorizationId)
+        : await oauth.denyAuthorization(authorizationId)
+      if (decisionError) throw decisionError
+      if (data?.redirect_url) {
+        window.location.href = data.redirect_url
       } else {
-        setSuccess('Access granted successfully.')
+        setSuccess(approve ? 'Access granted successfully.' : 'Access denied.')
       }
     } catch (err: unknown) {
-      setError((err instanceof Error ? err.message : null) || 'Failed to approve authorization.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  const handleDeny = async () => {
-    if (!authorizationId || submitting) return
-    setSubmitting(true)
-    setError(null)
-    try {
-      const supabase = createClient()
-      const auth = supabase.auth as unknown as OAuthAuthClient
-      const result = await auth.oauth.denyAuthorization(authorizationId)
-      if (result.error) throw result.error
-      const redirectUrl = result.data?.redirect_to || result.data?.redirect_uri || result.data?.url
-      if (redirectUrl) {
-        window.location.href = redirectUrl
-      } else {
-        setSuccess('Access denied.')
-      }
-    } catch (err: unknown) {
-      setError((err instanceof Error ? err.message : null) || 'Failed to deny authorization.')
+      setError(errorMessage(err, approve ? 'Failed to approve authorization.' : 'Failed to deny authorization.'))
     } finally {
       setSubmitting(false)
     }
@@ -147,9 +120,10 @@ function OAuthConsentContent() {
     )
   }
 
-  const rawName = details?.client?.name || ''
-  const isClaude = rawName.toLowerCase().includes('claude') || rawName.toLowerCase().includes('anthropic')
-  const clientName = isClaude ? 'Claude' : rawName || 'An MCP client'
+  if (!details) return null
+
+  const clientName = details.client.name || 'An MCP client'
+  const returnHost = redirectHost(details.redirect_uri)
 
   return (
     <div className="min-h-svh flex items-center justify-center bg-background p-8">
@@ -162,6 +136,9 @@ function OAuthConsentContent() {
           <p className="mt-2 text-sm text-muted-foreground">
             <span className="font-medium text-foreground">{clientName}</span> wants to connect
             to your LLM Wiki as an MCP server.
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            After approving you&apos;ll be sent to <span className="font-medium text-foreground">{returnHost}</span>
           </p>
         </div>
 
@@ -196,14 +173,14 @@ function OAuthConsentContent() {
         <div className="flex gap-3">
           <Button
             variant="outline"
-            onClick={handleDeny}
+            onClick={() => handleDecision(false)}
             disabled={submitting}
             className="flex-1"
           >
             Deny
           </Button>
           <Button
-            onClick={handleApprove}
+            onClick={() => handleDecision(true)}
             disabled={submitting}
             className="flex-1"
           >

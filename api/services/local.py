@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from config import settings
+from domain.file_types import SIMPLE_TEXT_TYPES
 from domain.watcher import mark_written
 from fastapi import HTTPException
 from infra.db.sqlite import SQLiteChunkRepository, SQLiteDocumentRepository, serialized_write
@@ -467,7 +468,7 @@ class LocalDocumentService(DocumentService):
         if not doc:
             return None
 
-        file_path = _doc_to_disk_path(doc)
+        file_path = _doc_to_disk_path(doc) if doc["file_type"] in SIMPLE_TEXT_TYPES else None
         if file_path:
             mark_written(str(file_path))
             await asyncio.to_thread(_write_text_file, file_path, content)

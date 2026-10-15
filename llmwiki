@@ -14,7 +14,6 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -214,17 +213,18 @@ def cmd_serve(workspace: str, open_browser: bool = True) -> None:
     web_env = env.copy()
     web_env["NEXT_PUBLIC_MODE"] = "local"
     web_env["NEXT_PUBLIC_API_URL"] = "http://localhost:8000"
-    npm = shutil.which("pnpm") or shutil.which("npm")
-    if npm is None:
+    next_bin = WEB_DIR / "node_modules" / ".bin" / ("next.cmd" if os.name == "nt" else "next")
+    if not next_bin.exists():
         print(
-            "Error: neither pnpm nor npm found on PATH. Install Node.js 20+ "
-            "and re-run.",
+            f"Error: web dependencies not installed. Install Node.js 20+, then run: "
+            f"cd {WEB_DIR} && npm install",
             file=sys.stderr,
         )
         api_proc.terminate()
         sys.exit(1)
+    # Loopback only: the dev server proxies /api and /mcp to the unauthenticated local API.
     web_proc = subprocess.Popen(
-        [npm, "run", "dev"],
+        [str(next_bin), "dev", "--webpack", "--port", "3000", "--hostname", "127.0.0.1"],
         cwd=str(WEB_DIR),
         env=web_env,
     )

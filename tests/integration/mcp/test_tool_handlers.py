@@ -175,6 +175,18 @@ class TestWriteReadFlow:
         assert "Goodbye world" in content
         assert "Hello world" not in content
 
+    async def test_edit_and_append_refuse_binary_sources(self, workspace, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+
+        (workspace / "paper.pdf").write_bytes(b"%PDF-1.7 original bytes")
+        await instance.create_document(kb_id, "paper.pdf", "Paper", "/", "pdf", "Extracted text.", ["source"])
+        writer = WriteHandler(instance, _make_kb(kb_id))
+
+        assert "read-only" in await writer.edit("/paper.pdf", "Extracted", "Changed")
+        assert "read-only" in await writer.append("/paper.pdf", "more")
+        assert (workspace / "paper.pdf").read_bytes() == b"%PDF-1.7 original bytes"
+
     async def test_edit_rejects_no_match(self, fs):
         instance, kb_id = fs
         from tools.write import WriteHandler

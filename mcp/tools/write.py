@@ -19,12 +19,22 @@ _FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n(.+?\n)---[ \t]*\n", re.DOTALL)
 _FOOTNOTE_DEF_RE = re.compile(r"^\[\^([^\]]+)\]:", re.MULTILINE)
 _CONTEXT_LINES = 5
 _MAX_TEXT_CONTENT_BYTES = 10 * 1024 * 1024
+TEXT_BACKED_TYPES = frozenset({"md", "txt", "svg", "csv", "json", "xml"})
 
 
 def _content_size_error(content: str) -> str | None:
     if len(content.encode("utf-8")) > _MAX_TEXT_CONTENT_BYTES:
         return "Error: content exceeds the 10 MiB text-document limit."
     return None
+
+
+def _read_only_source_error(path: str, doc: dict) -> str | None:
+    if doc["file_type"] in TEXT_BACKED_TYPES:
+        return None
+    return (
+        f"Error: '{path}' is a {doc['file_type']} source, and sources are read-only. "
+        "Write your notes into a wiki page instead."
+    )
 
 
 def _quiz_block_error(content: str) -> str | None:
@@ -307,6 +317,10 @@ class WriteHandler:
         if not doc:
             return f"Document '{path}' not found."
 
+        read_only_error = _read_only_source_error(path, doc)
+        if read_only_error:
+            return read_only_error
+
         content = doc.get("content") or ""
         error = self._validate_single_match(content, old_string)
         if error:
@@ -350,6 +364,10 @@ class WriteHandler:
         doc = await self.fs.get_document(self.kb_id, filename, dir_path)
         if not doc:
             return f"Document '{path}' not found."
+
+        read_only_error = _read_only_source_error(path, doc)
+        if read_only_error:
+            return read_only_error
 
         new_content = _append_markdown_section(doc.get("content") or "", content)
 

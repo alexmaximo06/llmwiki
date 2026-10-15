@@ -13,6 +13,7 @@ from typing import Any
 
 import asyncpg
 from config import settings
+from domain.file_types import SIMPLE_TEXT_TYPES
 from fastapi import HTTPException
 from services.chunker import chunk_text, store_chunks
 from services.webclip_assets import materialize_webclip_assets
@@ -960,22 +961,22 @@ class HostedDocumentService(DocumentService):
                     self.user_id,
                 )
                 current = await conn.fetchrow(
-                    "SELECT file_size, knowledge_base_id::text AS kb_id "
+                    "SELECT file_size, file_type, knowledge_base_id::text AS kb_id "
                     "FROM documents WHERE id = $1 AND user_id = $2 FOR UPDATE",
                     doc_id, self.user_id,
                 )
                 if not current:
                     return None
 
-                await self._check_storage_available(
-                    content_size - (current["file_size"] or 0),
-                    conn=conn,
-                )
+                # Extracted text of a binary source isn't the stored file; its size stays the blob's.
+                stored_size = current["file_size"] or 0
+                new_size = content_size if current["file_type"] in SIMPLE_TEXT_TYPES else stored_size
+                await self._check_storage_available(new_size - stored_size, conn=conn)
                 row = await conn.fetchrow(
                     "UPDATE documents SET content = $1, file_size = $2, "
                     "version = version + 1, updated_at = now() "
                     "WHERE id = $3 AND user_id = $4 RETURNING id, content, version",
-                    content, content_size, doc_id, self.user_id,
+                    content, new_size, doc_id, self.user_id,
                 )
 
                 await store_chunks(
