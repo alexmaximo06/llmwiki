@@ -4,6 +4,7 @@ Splits document content into ~512 token chunks with ~128 token overlap.
 Tracks markdown headers to build breadcrumb context per chunk.
 """
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -194,9 +195,13 @@ async def _store_chunks_on_conn(
     knowledge_base_id: str,
     chunks: list[Chunk],
 ):
-    await conn.execute("DELETE FROM document_chunks WHERE document_id = $1", document_id)
-
-    if not chunks:
+    # ponytail: keeps only the unchanged prefix; mid-document edits still rewrite the tail.
+    kept = await _count_unchanged_prefix(conn, document_id, chunks)
+    await conn.execute(
+        "DELETE FROM document_chunks WHERE document_id = $1 AND chunk_index >= $2", document_id, kept,
+    )
+    changed = chunks[kept:]
+    if not changed:
         return
 
     # source_content seeds the immutable raw text; content starts identical
@@ -213,14 +218,38 @@ async def _store_chunks_on_conn(
         document_id,
         user_id,
         knowledge_base_id,
-        [c.index for c in chunks],
-        [c.content for c in chunks],
-        [c.page for c in chunks],
-        [c.start_char for c in chunks],
-        [c.token_count for c in chunks],
-        [c.header_breadcrumb for c in chunks],
+        [c.index for c in changed],
+        [c.content for c in changed],
+        [c.page for c in changed],
+        [c.start_char for c in changed],
+        [c.token_count for c in changed],
+        [c.header_breadcrumb for c in changed],
     )
-    logger.info("Stored %d chunks for doc %s", len(chunks), document_id[:8])
+    logger.info("Stored %d of %d chunks for doc %s", len(changed), len(chunks), document_id[:8])
+
+
+async def _count_unchanged_prefix(conn: asyncpg.Connection, document_id: str, chunks: list[Chunk]) -> int:
+    """Count leading stored chunks identical to the new ones, so they can be left in place."""
+    rows = await _fetch_chunk_fingerprints(conn, document_id)
+    kept = 0
+    for row, chunk in zip(rows, chunks, strict=False):
+        if tuple(row) != _chunk_fingerprint(chunk):
+            break
+        kept += 1
+    return kept
+
+
+def _chunk_fingerprint(chunk: Chunk) -> tuple:
+    digest = hashlib.md5(chunk.content.encode()).hexdigest()
+    return (chunk.index, digest, chunk.page, chunk.start_char, chunk.token_count, chunk.header_breadcrumb)
+
+
+async def _fetch_chunk_fingerprints(conn: asyncpg.Connection, document_id: str) -> list[asyncpg.Record]:
+    return await conn.fetch(
+        "SELECT chunk_index, md5(source_content), page, start_char, token_count, header_breadcrumb "
+        "FROM document_chunks WHERE document_id = $1 ORDER BY chunk_index",
+        document_id,
+    )
 
 
 def _split_paragraphs(text: str) -> list[str]:

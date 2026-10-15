@@ -16,6 +16,9 @@ class RecordingConnection:
         self.calls.append((sql, args))
         return "INSERT 0 1"
 
+    async def fetch(self, sql: str, *args) -> list:
+        return []
+
 
 def _load_api_module(name: str, relative_path: str):
     path = Path(__file__).resolve().parents[2] / "api" / relative_path

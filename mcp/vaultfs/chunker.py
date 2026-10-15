@@ -8,6 +8,7 @@ asyncpg, SQLite via aiosqlite — chunks_fts is kept in sync by triggers
 in the local schema).
 """
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -166,8 +167,13 @@ async def store_chunks_pg(
     knowledge_base_id: str,
     chunks: list[Chunk],
 ) -> None:
-    await conn.execute("DELETE FROM document_chunks WHERE document_id = $1", document_id)
-    if not chunks:
+    # ponytail: keeps only the unchanged prefix; mid-document edits still rewrite the tail.
+    kept = await _count_unchanged_prefix_pg(conn, document_id, chunks)
+    await conn.execute(
+        "DELETE FROM document_chunks WHERE document_id = $1 AND chunk_index >= $2", document_id, kept,
+    )
+    changed = chunks[kept:]
+    if not changed:
         return
     # source_content mirrors content at ingest; highlight CRUD may later
     # rewrite content with annotations appended. See api/services/highlight_chunks.
@@ -182,12 +188,36 @@ async def store_chunks_pg(
         document_id,
         user_id,
         knowledge_base_id,
-        [c.index for c in chunks],
-        [c.content for c in chunks],
-        [c.page for c in chunks],
-        [c.start_char for c in chunks],
-        [c.token_count for c in chunks],
-        [c.header_breadcrumb for c in chunks],
+        [c.index for c in changed],
+        [c.content for c in changed],
+        [c.page for c in changed],
+        [c.start_char for c in changed],
+        [c.token_count for c in changed],
+        [c.header_breadcrumb for c in changed],
+    )
+
+
+async def _count_unchanged_prefix_pg(conn: asyncpg.Connection, document_id: str, chunks: list[Chunk]) -> int:
+    """Count leading stored chunks identical to the new ones, so they can be left in place."""
+    rows = await _fetch_chunk_fingerprints_pg(conn, document_id)
+    kept = 0
+    for row, chunk in zip(rows, chunks, strict=False):
+        if tuple(row) != _chunk_fingerprint(chunk):
+            break
+        kept += 1
+    return kept
+
+
+def _chunk_fingerprint(chunk: Chunk) -> tuple:
+    digest = hashlib.md5(chunk.content.encode()).hexdigest()
+    return (chunk.index, digest, chunk.page, chunk.start_char, chunk.token_count, chunk.header_breadcrumb)
+
+
+async def _fetch_chunk_fingerprints_pg(conn: asyncpg.Connection, document_id: str) -> list[asyncpg.Record]:
+    return await conn.fetch(
+        "SELECT chunk_index, md5(source_content), page, start_char, token_count, header_breadcrumb "
+        "FROM document_chunks WHERE document_id = $1 ORDER BY chunk_index",
+        document_id,
     )
 
 

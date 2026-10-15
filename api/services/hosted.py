@@ -875,15 +875,18 @@ class HostedDocumentService(DocumentService):
         if not affected:
             return
 
-        for chunk, anno_text, has_hl, new_content in iter_chunks_with_annotations(
-            chunks, affected, new_highlights,
-        ):
-            await conn.execute(
-                "UPDATE document_chunks "
-                "SET annotations_text = $1, has_highlight = $2, content = $3 "
-                "WHERE id = $4",
-                anno_text, has_hl, new_content, chunk.id,
-            )
+        updates = list(iter_chunks_with_annotations(chunks, affected, new_highlights))
+        await conn.execute(
+            "UPDATE document_chunks c "
+            "SET annotations_text = u.annotations_text, has_highlight = u.has_highlight, content = u.content "
+            "FROM UNNEST($1::uuid[], $2::text[], $3::bool[], $4::text[]) "
+            "AS u(id, annotations_text, has_highlight, content) "
+            "WHERE c.id = u.id",
+            [chunk.id for chunk, _, _, _ in updates],
+            [anno_text for _, anno_text, _, _ in updates],
+            [has_hl for _, _, has_hl, _ in updates],
+            [new_content for _, _, _, new_content in updates],
+        )
 
     @staticmethod
     def _reraise_doc_conflict(e: asyncpg.UniqueViolationError):

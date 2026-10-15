@@ -607,7 +607,8 @@ class PostgresVaultFS(VaultFS):
             "FROM documents d "
             "WHERE d.knowledge_base_id = $1 AND NOT d.archived AND d.user_id = $2 "
             "  AND d.path NOT LIKE '/wiki/%' "
-            "  AND d.id NOT IN (SELECT target_document_id FROM document_references WHERE reference_type = 'cites') "
+            "  AND NOT EXISTS (SELECT 1 FROM document_references r "
+            "                  WHERE r.target_document_id = d.id AND r.reference_type = 'cites') "
             "ORDER BY d.filename",
             kb_id, self.user_id,
         )

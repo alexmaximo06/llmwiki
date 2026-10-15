@@ -208,6 +208,31 @@ class TestUpdateContent:
         assert len(new_chunks) >= 1
         assert new_chunks[0]["content"] != old_chunks[0]["content"]
 
+    async def test_append_keeps_unchanged_chunks(self, client, pool):
+        headers = auth_headers(USER_ID)
+        body = "\n\n".join(f"## Section {i}\n\n" + f"Paragraph {i} sentence. " * 120 for i in range(4))
+        doc_id = (await client.post(
+            f"/v1/knowledge-bases/{KB_ID}/documents/note",
+            headers=headers,
+            json={"filename": "long.md", "content": body},
+        )).json()["id"]
+        before = await chunk_ids(pool, doc_id)
+
+        await client.put(f"/v1/documents/{doc_id}/content", headers=headers, json={"content": body})
+        assert await chunk_ids(pool, doc_id) == before
+
+        await client.put(
+            f"/v1/documents/{doc_id}/content", headers=headers, json={"content": body + "\n\nAppended tail."},
+        )
+        after = await chunk_ids(pool, doc_id)
+        assert len(before) >= 3
+        assert after[:len(before) - 1] == before[:-1]
+        tail = await pool.fetchval(
+            "SELECT source_content FROM document_chunks WHERE document_id = $1 ORDER BY chunk_index DESC LIMIT 1",
+            doc_id,
+        )
+        assert "Appended tail." in tail
+
     async def test_content_edit_keeps_highlight_comments_searchable(self, client, pool):
         headers = auth_headers(USER_ID)
         body = "The mitochondria is the powerhouse of the cell. " * 10
@@ -546,3 +571,44 @@ class TestWebClipReclip:
             KB_ID,
         )
         assert asset_count == 1
+
+
+async def chunk_ids(pool, doc_id: str) -> list[str]:
+    rows = await pool.fetch(
+        "SELECT id::text FROM document_chunks WHERE document_id = $1 ORDER BY chunk_index", doc_id,
+    )
+    return [r["id"] for r in rows]
+
+
+class TestGraphRebuild:
+
+    async def test_rebuild_records_citations_and_links(self, pool):
+        from services.graph import rebuild_hosted
+
+        source_id = await insert_doc(pool, "paper.pdf", "/", "pdf", "Extracted")
+        topic_id = await insert_doc(pool, "topic.md", "/wiki/", "md", "Topic page.")
+        overview_id = await insert_doc(
+            pool, "overview.md", "/wiki/", "md",
+            "See [Topic](topic.md).\n\nClaim.[^1]\n\n[^1]: paper.pdf, p.3",
+        )
+
+        async with pool.acquire() as conn:
+            result = await rebuild_hosted(conn, KB_ID, USER_ID)
+
+        rows = await pool.fetch(
+            "SELECT source_document_id, target_document_id, reference_type, page FROM document_references "
+            "ORDER BY reference_type",
+        )
+        assert result == {"citations": 1, "links": 1}
+        assert [(r["source_document_id"], r["target_document_id"], r["reference_type"], r["page"]) for r in rows] == [
+            (overview_id, source_id, "cites", 3),
+            (overview_id, topic_id, "links_to", None),
+        ]
+
+
+async def insert_doc(pool, filename: str, path: str, file_type: str, content: str) -> uuid.UUID:
+    return await pool.fetchval(
+        "INSERT INTO documents (knowledge_base_id, user_id, filename, title, path, file_type, status, content) "
+        "VALUES ($1, $2, $3, $3, $4, $5, 'ready', $6) RETURNING id",
+        KB_ID, USER_ID, filename, path, file_type, content,
+    )
