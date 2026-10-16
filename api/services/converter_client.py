@@ -14,9 +14,7 @@ logger = logging.getLogger(__name__)
 class ConverterClient:
     MAX_RETRIES = 3
     RETRY_BACKOFF = [1, 2]
-    # Match the converter's default extraction capacity so one API worker can't
-    # predictably overload a single converter instance; the 503 retries below
-    # still cover capacity shared by multiple API workers.
+    # The converter's default capacity; 503 retries cover capacity shared across API workers.
     MAX_CONCURRENT_REQUESTS = 2
 
     def __init__(self) -> None:

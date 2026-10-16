@@ -1,12 +1,4 @@
-"""Converter /extract tests.
-
-Extraction shells out to opendataloader in a child process and streams the
-source over httpx, so the seams we mock are `process_group.run_in_process_group`
-(the subprocess) and `httpx.AsyncClient` (the download) — not an in-process
-library call. CONVERTER_SECRET is mandatory, so the fixture sets it and requests
-carry the matching bearer token by default. Safety limits live on the
-`ConverterConfig` instance at `converter.main.config`.
-"""
+"""Converter /extract tests; the mocked seams are the opendataloader subprocess and the httpx download."""
 
 import asyncio
 import importlib
