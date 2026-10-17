@@ -19,12 +19,22 @@ _FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n(.+?\n)---[ \t]*\n", re.DOTALL)
 _FOOTNOTE_DEF_RE = re.compile(r"^\[\^([^\]]+)\]:", re.MULTILINE)
 _CONTEXT_LINES = 5
 _MAX_TEXT_CONTENT_BYTES = 10 * 1024 * 1024
+TEXT_BACKED_TYPES = frozenset({"md", "txt", "svg", "csv", "json", "xml"})
 
 
 def _content_size_error(content: str) -> str | None:
     if len(content.encode("utf-8")) > _MAX_TEXT_CONTENT_BYTES:
         return "Error: content exceeds the 10 MiB text-document limit."
     return None
+
+
+def _read_only_source_error(path: str, doc: dict) -> str | None:
+    if doc["file_type"] in TEXT_BACKED_TYPES:
+        return None
+    return (
+        f"Error: '{path}' is a {doc['file_type']} source, and sources are read-only. "
+        "Write your notes into a wiki page instead."
+    )
 
 
 def _quiz_block_error(content: str) -> str | None:
@@ -48,11 +58,7 @@ def _parse_frontmatter(content: str) -> dict:
 
 
 def _extract_metadata(meta: dict) -> tuple[str | None, dict]:
-    """Extract date and metadata dict from parsed frontmatter.
-
-    Returns (date_str, metadata_dict). Always returns a dict (possibly empty)
-    so that stale metadata is explicitly cleared when frontmatter changes.
-    """
+    """Extract the date and the frontmatter-owned metadata keys (description) to merge into the document."""
     date_str = None
     if "date" in meta:
         d = meta["date"]
@@ -89,6 +95,14 @@ def _is_slug_title(title: str) -> bool:
     """True for file-name style titles (`firefox-playwright-mcp`) that get humanized."""
     clean = re.sub(r"\.(md|txt|svg|csv|json|xml|html)$", "", title)
     return clean == clean.lower() and "-" in clean
+
+
+def _display_title(raw_title: str, humanized: str, content: str) -> str:
+    """A slug-style title only names the file; humanizing it loses casing
+    ("...-mcp" -> "Mcp"), so prefer the page's own frontmatter title."""
+    if _is_slug_title(raw_title):
+        return _frontmatter_title(content) or humanized
+    return humanized
 
 
 def _frontmatter_title(content: str) -> str | None:
@@ -229,14 +243,11 @@ class WriteHandler:
             return "Error: title is required when creating a note."
 
         dir_path = self._to_dir_path(path)
-        filename, file_type = self._title_to_filename(title)
-        # A slug-style title only names the file; humanizing it loses casing
-        # ("...-mcp" -> "Mcp"), so prefer the page's own frontmatter title.
-        slug_title = _is_slug_title(title)
+        filename, file_type = self._explicit_filename(path) or self._title_to_filename(title)
+        raw_title = title
         title = self._humanize_title(title)
         content = _ensure_wiki_frontmatter(content, title, tags, date_str, dir_path, filename, file_type)
-        if slug_title:
-            title = _frontmatter_title(content) or title
+        title = _display_title(raw_title, title, content)
 
         size_error = _content_size_error(content)
         if size_error:
@@ -258,8 +269,15 @@ class WriteHandler:
                 f"Use the `edit` tool to modify it, or pass `overwrite=true` to replace it entirely."
             )
 
-        if not self.fs.write_to_disk(dir_path, filename, content):
-            return f"Error: invalid path `{dir_path.lstrip('/') + filename}`"
+        try:
+            written = self.fs.write_to_disk(dir_path, filename, content, exclusive=existing is None)
+        except FileExistsError:
+            return (
+                f"Error: a file already exists on disk at `{dir_path}{filename}` but isn't in the wiki index. "
+                "Choose a different title or path."
+            )
+        if not written:
+            return f"Error: invalid path `{dir_path.lstrip('/') + filename}` (hidden folders and paths outside the workspace are not writable)"
 
         # Extract date + description from frontmatter
         meta = _parse_frontmatter(content)
@@ -323,6 +341,10 @@ class WriteHandler:
         if not doc:
             return f"Document '{path}' not found."
 
+        read_only_error = _read_only_source_error(path, doc)
+        if read_only_error:
+            return read_only_error
+
         content = doc.get("content") or ""
         error = self._validate_single_match(content, old_string)
         if error:
@@ -366,6 +388,10 @@ class WriteHandler:
         doc = await self.fs.get_document(self.kb_id, filename, dir_path)
         if not doc:
             return f"Document '{path}' not found."
+
+        read_only_error = _read_only_source_error(path, doc)
+        if read_only_error:
+            return read_only_error
 
         new_content = _append_markdown_section(doc.get("content") or "", content)
 
@@ -424,14 +450,18 @@ class WriteHandler:
         return "\n".join(lines)
 
     def _to_dir_path(self, path: str) -> str:
-        """Normalize a raw path into a directory path."""
+        """Normalize a folder or file path into a '/dir/' directory path."""
         if _FILE_EXT_RE.search(path):
-            last_slash = path.rfind("/")
-            return path[:last_slash + 1] if last_slash >= 0 else "/"
+            path = path[:path.rfind("/") + 1]
         dir_path = path if path.endswith("/") else path + "/"
-        if not dir_path.startswith("/"):
-            dir_path = "/" + dir_path
-        return dir_path
+        return dir_path if dir_path.startswith("/") else "/" + dir_path
+
+    def _explicit_filename(self, path: str) -> tuple[str, str] | None:
+        """(filename, file_type) when `path` names a file, kept exactly as given; None for a folder path."""
+        if not _FILE_EXT_RE.search(path):
+            return None
+        filename = path.rsplit("/", 1)[-1]
+        return filename, filename.rsplit(".", 1)[-1].lower()
 
     def _title_to_filename(self, title: str) -> tuple[str, str]:
         """Derive (filename, file_type) from a document title."""
@@ -537,6 +567,8 @@ def register(mcp: FastMCP, get_user_id, fs_factory) -> None:
             "- `create(path=\"/wiki/\", title=\"architecture-diagram.svg\", content=\"<svg>...</svg>\", tags=[\"diagram\"])`\n"
             "- `create(path=\"/wiki/\", title=\"data-table.csv\", content=\"col1,col2\\nval1,val2\", tags=[\"data\"])`\n"
             "SVGs and other assets can be embedded in wiki pages via `![Architecture](architecture-diagram.svg)`\n\n"
+            "`path` is either a folder (`/wiki/concepts/`, filename derived from `title`) or a full file path "
+            "(`/wiki/concepts/attention.md`, filename used as given).\n\n"
             "Rejects if the page already exists — use `overwrite=true` to replace, or use the `edit` tool to modify."
         ),
     )

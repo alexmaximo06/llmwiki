@@ -13,6 +13,7 @@ from typing import Any
 
 import asyncpg
 from config import settings
+from domain.file_types import SIMPLE_TEXT_TYPES
 from fastapi import HTTPException
 from services.chunker import chunk_text, store_chunks
 from services.webclip_assets import materialize_webclip_assets
@@ -169,14 +170,17 @@ class HostedKBService(KBService):
 
     async def update(self, kb_id: str, name: str | None, description: str | None, kind: str | None = None) -> dict | None:
         if name is not None:
-            slug = await self._unique_slug(name)
-            row = await self.pool.fetchrow(
-                "UPDATE knowledge_bases SET name = $1, slug = $2, description = COALESCE($3, description), "
-                "kind = COALESCE($4, kind), updated_at = now() "
-                "WHERE id = $5 AND user_id = $6 "
-                "RETURNING id, user_id, name, slug, description, kind, created_at, updated_at",
-                name, slug, description, kind, kb_id, self.user_id,
-            )
+            slug = await self._unique_slug(name, exclude_kb_id=kb_id)
+            try:
+                row = await self.pool.fetchrow(
+                    "UPDATE knowledge_bases SET name = $1, slug = $2, description = COALESCE($3, description), "
+                    "kind = COALESCE($4, kind), updated_at = now() "
+                    "WHERE id = $5 AND user_id = $6 "
+                    "RETURNING id, user_id, name, slug, description, kind, created_at, updated_at",
+                    name, slug, description, kind, kb_id, self.user_id,
+                )
+            except asyncpg.UniqueViolationError as e:
+                raise HTTPException(status_code=409, detail=f"You already have a wiki named '{name}'.") from e
         else:
             row = await self.pool.fetchrow(
                 "UPDATE knowledge_bases SET description = COALESCE($1, description), "
@@ -195,20 +199,19 @@ class HostedKBService(KBService):
     async def _insert_kb(self, name: str, slug: str, description: str | None, kind: str = "wiki") -> dict:
         conn = await _acquire_connection(self.pool)
         try:
-            async with conn.transaction():
-                current_name = name
-                for attempt in range(10):
-                    try:
-                        row = await conn.fetchrow(
-                            "INSERT INTO knowledge_bases (user_id, name, slug, description, kind) "
-                            "VALUES ($1, $2, $3, $4, $5) "
-                            "RETURNING id, user_id, name, slug, description, kind, created_at, updated_at",
-                            self.user_id, current_name, slug, description, kind,
-                        )
-                        return dict(row)
-                    except asyncpg.UniqueViolationError:
-                        current_name = f"{name} ({attempt + 2})"
-                        slug = await self._unique_slug(current_name)
+            current_name = name
+            for attempt in range(10):
+                try:
+                    row = await conn.fetchrow(
+                        "INSERT INTO knowledge_bases (user_id, name, slug, description, kind) "
+                        "VALUES ($1, $2, $3, $4, $5) "
+                        "RETURNING id, user_id, name, slug, description, kind, created_at, updated_at",
+                        self.user_id, current_name, slug, description, kind,
+                    )
+                    return dict(row)
+                except asyncpg.UniqueViolationError:
+                    current_name = f"{name} ({attempt + 2})"
+                    slug = await self._unique_slug(current_name)
         finally:
             await self.pool.release(conn)
         raise HTTPException(status_code=409, detail="Could not create wiki — too many duplicates.")
@@ -257,11 +260,11 @@ class HostedKBService(KBService):
             )
         except asyncpg.UniqueViolationError as e:
             if e.constraint_name == "idx_knowledge_bases_public_slug":
-                raise HTTPException(status_code=409, detail="That public slug is already taken — try another.")
+                raise HTTPException(status_code=409, detail="That public slug is already taken — try another.") from e
             raise
         except asyncpg.CheckViolationError as e:
             if e.constraint_name == "knowledge_bases_public_slug_format":
-                raise HTTPException(status_code=400, detail="Slug must be 2–80 lowercase characters, digits, or hyphens (no leading/trailing hyphen).")
+                raise HTTPException(status_code=400, detail="Slug must be 2–80 lowercase characters, digits, or hyphens (no leading/trailing hyphen).") from e
             raise
         return dict(row) if row else None
 
@@ -292,13 +295,13 @@ class HostedKBService(KBService):
             except Exception:
                 logger.exception("S3 purge failed for document %s", doc_id)
 
-    async def _unique_slug(self, name: str) -> str:
+    async def _unique_slug(self, name: str, exclude_kb_id: str | None = None) -> str:
         base = _slugify(name)
         slug = base
         counter = 2
         while await self.pool.fetchval(
-            "SELECT 1 FROM knowledge_bases WHERE slug = $1 AND user_id = $2",
-            slug, self.user_id,
+            "SELECT 1 FROM knowledge_bases WHERE slug = $1 AND user_id = $2 AND id IS DISTINCT FROM $3::uuid",
+            slug, self.user_id, exclude_kb_id,
         ):
             slug = f"{base}-{counter}"
             counter += 1
@@ -535,7 +538,7 @@ class HostedDocumentService(DocumentService):
                     next_highlights = merge_highlights_by_id(current_highlights, enriched)
                     row = await conn.fetchrow(
                         f"UPDATE documents SET path = $1, title = $2, file_size = $3, "
-                        f"status = 'ready', content = $4, metadata = $5::jsonb, "
+                        f"status = 'ready', content = $4, metadata = COALESCE(metadata, '{{}}'::jsonb) || $5::jsonb, "
                         f"highlights = $6::jsonb, version = version + 1, updated_at = now() "
                         f"WHERE id = $7 AND user_id = $8 "
                         f"RETURNING {_DOC_COLUMNS}",
@@ -872,15 +875,18 @@ class HostedDocumentService(DocumentService):
         if not affected:
             return
 
-        for chunk, anno_text, has_hl, new_content in iter_chunks_with_annotations(
-            chunks, affected, new_highlights,
-        ):
-            await conn.execute(
-                "UPDATE document_chunks "
-                "SET annotations_text = $1, has_highlight = $2, content = $3 "
-                "WHERE id = $4",
-                anno_text, has_hl, new_content, chunk.id,
-            )
+        updates = list(iter_chunks_with_annotations(chunks, affected, new_highlights))
+        await conn.execute(
+            "UPDATE document_chunks c "
+            "SET annotations_text = u.annotations_text, has_highlight = u.has_highlight, content = u.content "
+            "FROM UNNEST($1::uuid[], $2::text[], $3::bool[], $4::text[]) "
+            "AS u(id, annotations_text, has_highlight, content) "
+            "WHERE c.id = u.id",
+            [chunk.id for chunk, _, _, _ in updates],
+            [anno_text for _, anno_text, _, _ in updates],
+            [has_hl for _, _, has_hl, _ in updates],
+            [new_content for _, _, _, new_content in updates],
+        )
 
     @staticmethod
     def _reraise_doc_conflict(e: asyncpg.UniqueViolationError):
@@ -960,26 +966,29 @@ class HostedDocumentService(DocumentService):
                     self.user_id,
                 )
                 current = await conn.fetchrow(
-                    "SELECT file_size, knowledge_base_id::text AS kb_id "
+                    "SELECT file_size, file_type, highlights, knowledge_base_id::text AS kb_id "
                     "FROM documents WHERE id = $1 AND user_id = $2 FOR UPDATE",
                     doc_id, self.user_id,
                 )
                 if not current:
                     return None
 
-                await self._check_storage_available(
-                    content_size - (current["file_size"] or 0),
-                    conn=conn,
-                )
+                # Extracted text of a binary source isn't the stored file; its size stays the blob's.
+                stored_size = current["file_size"] or 0
+                new_size = content_size if current["file_type"] in SIMPLE_TEXT_TYPES else stored_size
+                await self._check_storage_available(new_size - stored_size, conn=conn)
                 row = await conn.fetchrow(
                     "UPDATE documents SET content = $1, file_size = $2, "
-                    "version = version + 1, updated_at = now() "
+                    "version = version + 1, updated_at = now(), stale_since = NULL "
                     "WHERE id = $3 AND user_id = $4 RETURNING id, content, version",
-                    content, content_size, doc_id, self.user_id,
+                    content, new_size, doc_id, self.user_id,
                 )
 
                 await store_chunks(
                     conn, str(doc_id), self.user_id, current["kb_id"], chunks,
+                )
+                await self._recompute_chunks_for_doc(
+                    conn, doc_id, [], self._parse_highlights(current["highlights"]),
                 )
         finally:
             await self.pool.release(conn)

@@ -46,27 +46,39 @@ class TestCreateKB:
         assert overview["tags"] == ["overview", "wiki"]
         assert overview["date"]
 
-    async def test_duplicate_name_rejected(self, client):
+    async def test_duplicate_name_is_auto_suffixed(self, client):
         headers = auth_headers(USER_ID)
-        resp1 = await client.post(
-            "/v1/knowledge-bases", headers=headers,
-            json={"name": "Duplicate"},
-        )
-        assert resp1.status_code == 201
+        resp1 = await client.post("/v1/knowledge-bases", headers=headers, json={"name": "Duplicate"})
+        resp2 = await client.post("/v1/knowledge-bases", headers=headers, json={"name": "Duplicate"})
 
-        import asyncpg
-        with pytest.raises((asyncpg.UniqueViolationError, Exception)):
-            await client.post(
-                "/v1/knowledge-bases", headers=headers,
-                json={"name": "Duplicate"},
-            )
+        assert resp1.status_code == 201
+        assert resp2.status_code == 201
+        assert resp2.json()["name"] == "Duplicate (2)"
+        assert resp2.json()["slug"] != resp1.json()["slug"]
+
+    async def test_rename_keeps_slug_when_it_would_not_change(self, client):
+        headers = auth_headers(USER_ID)
+        kb = (await client.post("/v1/knowledge-bases", headers=headers, json={"name": "My Wiki"})).json()
+
+        resp = await client.patch(f"/v1/knowledge-bases/{kb['id']}", headers=headers, json={"name": "My wiki"})
+
+        assert resp.status_code == 200
+        assert resp.json()["slug"] == kb["slug"]
+
+    async def test_rename_to_an_existing_name_is_409(self, client):
+        headers = auth_headers(USER_ID)
+        await client.post("/v1/knowledge-bases", headers=headers, json={"name": "Taken"})
+        other = (await client.post("/v1/knowledge-bases", headers=headers, json={"name": "Other"})).json()
+
+        resp = await client.patch(f"/v1/knowledge-bases/{other['id']}", headers=headers, json={"name": "Taken"})
+
+        assert resp.status_code == 409
 
     async def test_global_user_cap_enforced(self, client):
         import os
         old = os.environ.get("GLOBAL_MAX_USERS")
         os.environ["GLOBAL_MAX_USERS"] = "0"
         try:
-            from config import Settings
             # Config is cached at import, so this tests the DB check path
             # The actual check is: SELECT COUNT(DISTINCT id) FROM users >= GLOBAL_MAX_USERS
             # Since we have 1 user and cap is set via env, this may not take effect

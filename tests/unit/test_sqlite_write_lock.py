@@ -3,7 +3,6 @@ interleaved highlight upserts must not collide or lose an update."""
 
 import asyncio
 import uuid
-from pathlib import Path
 
 USER_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
@@ -25,7 +24,7 @@ async def _seed_doc(db) -> str:
 
 
 async def test_concurrent_highlight_upserts_serialize(tmp_path):
-    from infra.db.sqlite import create_pool, SQLiteDocumentRepository
+    from infra.db.sqlite import SQLiteDocumentRepository, create_pool
 
     db = await create_pool(str(tmp_path / "index.db"))
     doc_id = await _seed_doc(db)

@@ -1,8 +1,8 @@
 """Regression tests for set-based hosted persistence helpers."""
 
 import importlib.util
-from pathlib import Path
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +15,9 @@ class RecordingConnection:
     async def execute(self, sql: str, *args):
         self.calls.append((sql, args))
         return "INSERT 0 1"
+
+    async def fetch(self, sql: str, *args) -> list:
+        return []
 
 
 def _load_api_module(name: str, relative_path: str):

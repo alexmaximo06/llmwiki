@@ -6,9 +6,10 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from vaultfs import VaultFS
+
 from mcp.server.fastmcp import Context, FastMCP
 
-from vaultfs import VaultFS
 from .helpers import glob_match
 from .quiz_lint import lint_quiz_blocks
 from .references import _parse_citation_filename, _parse_wiki_links

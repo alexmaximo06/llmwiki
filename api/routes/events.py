@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-
 from deps import get_user_id
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 if TYPE_CHECKING:
     import aiosqlite
@@ -73,7 +72,7 @@ def _decode_metadata(value: dict | str) -> dict:
 def _iso_timestamp(value: datetime | str) -> str:
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
+            value = value.replace(tzinfo=UTC)
         return value.isoformat().replace("+00:00", "Z")
     text = str(value)
     if "T" not in text and " " in text:
@@ -121,7 +120,7 @@ async def _fetch_local_events(
         tuple(params),
     )
     columns = [column[0] for column in cursor.description]
-    return [dict(zip(columns, row)) for row in await cursor.fetchall()]
+    return [dict(zip(columns, row, strict=False)) for row in await cursor.fetchall()]
 
 
 async def _fetch_hosted_events(

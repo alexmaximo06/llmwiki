@@ -4,10 +4,9 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
+from deps import get_scoped_db, get_user_id
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-
-from deps import get_scoped_db, get_user_id
 from scoped_db import ScopedDB
 
 router = APIRouter(prefix="/v1/api-keys", tags=["api-keys"])

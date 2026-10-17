@@ -11,6 +11,8 @@ from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
+from services import converter_client
+from services.types import ConverterExtraction
 
 
 def _import_ocr_module(monkeypatch):
@@ -175,18 +177,30 @@ async def test_tus_finalize_rechecks_quota_and_cleans_uploaded_object(monkeypatc
     assert upload.upload_id not in tus._uploads
 
 
-async def test_presigned_urls_are_scoped_to_exact_document_keys(monkeypatch):
+async def test_office_with_mistral_backend_and_converter_uses_extract(monkeypatch):
+    """PDF_BACKEND=mistral + CONVERTER_URL must route Office files through /extract — /convert no longer exists."""
     ocr = _import_ocr_module(monkeypatch)
     s3 = RecordingS3()
     service = ocr.OCRService(s3, pool=None)
     calls = []
+    stored = []
 
     class FakeResponse:
+        status_code = 200
         headers = {"content-type": "application/json"}
+
+        def __init__(self, request_id: str):
+            self._request_id = request_id
+
         def raise_for_status(self):
             return None
+
         def json(self):
-            return {}
+            return {
+                "request_id": self._request_id,
+                "pages": [{"page": 1, "content": "office md"}],
+                "engine": "opendataloader",
+            }
 
     class FakeClient:
         async def __aenter__(self):
@@ -197,43 +211,27 @@ async def test_presigned_urls_are_scoped_to_exact_document_keys(monkeypatch):
 
         async def post(self, url, json, headers):
             calls.append((url, json, headers))
-            return FakeResponse()
+            return FakeResponse(json["request_id"])
 
+    async def fake_store_extracted_pages(document_id, user_id, kb_id, page_contents, parser, page_elements=None, assets=None):
+        stored.append((document_id, kb_id, page_contents, parser))
+
+    monkeypatch.setattr(ocr.settings, "PDF_BACKEND", "mistral")
     monkeypatch.setattr(ocr.settings, "CONVERTER_URL", "https://converter.test")
     monkeypatch.setattr(ocr.settings, "CONVERTER_SECRET", "secret-token")
-    monkeypatch.setattr(ocr.httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
+    monkeypatch.setattr(converter_client.httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
+    monkeypatch.setattr(service._pages, "store_extracted_pages", fake_store_extracted_pages)
 
-    pdf_key_a = await service._convert_to_pdf_s3(
-        document_id="doc-a",
-        user_id="user-a",
-        s3_source_key="user-a/doc-a/source.docx",
-        ext="docx",
-    )
-    pdf_key_b = await service._convert_to_pdf_s3(
-        document_id="doc-b",
-        user_id="user-b",
-        s3_source_key="user-b/doc-b/source.docx",
-        ext="docx",
+    await service._process_office(
+        "doc-a", "user-a", "kb-a", "user-a/doc-a/source.docx", "docx",
     )
 
-    assert pdf_key_a == "user-a/doc-a/converted.pdf"
-    assert pdf_key_b == "user-b/doc-b/converted.pdf"
+    assert calls[0][0] == "https://converter.test/extract"
     assert calls[0][1]["source_url"] == "https://s3.local/get/user-a%2Fdoc-a%2Fsource.docx"
-    assert calls[0][1]["result_url"] == "https://s3.local/put/user-a%2Fdoc-a%2Fconverted.pdf"
     assert calls[0][1]["source_ext"] == "docx"
-    assert "request_id" in calls[0][1]
-    assert calls[1][1]["source_url"] == "https://s3.local/get/user-b%2Fdoc-b%2Fsource.docx"
-    assert calls[1][1]["result_url"] == "https://s3.local/put/user-b%2Fdoc-b%2Fconverted.pdf"
-    assert calls[1][1]["source_ext"] == "docx"
-    assert calls[0][1]["request_id"] != calls[1][1]["request_id"]
-    assert s3.presigned_get_calls == [
-        ("user-a/doc-a/source.docx", 3600),
-        ("user-b/doc-b/source.docx", 3600),
-    ]
-    assert s3.presigned_put_calls == [
-        ("user-a/doc-a/converted.pdf", "application/pdf", 3600),
-        ("user-b/doc-b/converted.pdf", "application/pdf", 3600),
-    ]
+    assert calls[0][1]["pdf_upload_url"] == "https://s3.local/put/user-a%2Fdoc-a%2Fconverted.pdf"
+    assert stored == [("doc-a", "kb-a", [(1, "office md")], "libreoffice+opendataloader")]
+    assert s3.presigned_put_calls == [("user-a/doc-a/converted.pdf", "application/pdf", 3600)]
 
 
 async def test_converter_extract_retries_capacity_response(monkeypatch):
@@ -274,12 +272,13 @@ async def test_converter_extract_retries_capacity_response(monkeypatch):
         sleeps.append(delay)
 
     monkeypatch.setattr(ocr.settings, "CONVERTER_URL", "https://converter.test")
-    monkeypatch.setattr(ocr.httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
-    monkeypatch.setattr(ocr.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(converter_client.httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
+    monkeypatch.setattr(converter_client.asyncio, "sleep", fake_sleep)
 
-    pages = await service._call_converter_extract("https://s3.test/source.pdf", "pdf")
+    extraction = await service._converter.extract("https://s3.test/source.pdf", "pdf")
 
-    assert pages == [(1, "recovered")]
+    assert extraction.pages == [(1, "recovered")]
+    assert extraction.engine == "opendataloader"
     assert len(attempts) == 3
     assert len(set(attempts)) == 1
     assert sleeps == [0.0, 0.0]
@@ -323,14 +322,14 @@ async def test_converter_extract_requests_are_bounded(monkeypatch):
             return FakeResponse(json["request_id"])
 
     monkeypatch.setattr(ocr.settings, "CONVERTER_URL", "https://converter.test")
-    monkeypatch.setattr(ocr.httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
+    monkeypatch.setattr(converter_client.httpx, "AsyncClient", lambda *args, **kwargs: FakeClient())
 
     await asyncio.gather(*(
-        service._call_converter_extract(f"https://s3.test/{i}.pdf", "pdf")
+        service._converter.extract(f"https://s3.test/{i}.pdf", "pdf")
         for i in range(5)
     ))
 
-    assert peak == ocr.MAX_CONCURRENT_CONVERTER_REQUESTS == 2
+    assert peak == converter_client.ConverterClient.MAX_CONCURRENT_REQUESTS == 2
 
 
 def test_tus_upload_namespace_isolation():
@@ -368,13 +367,16 @@ async def test_ocr_service_has_no_shared_mutable_state_between_requests(monkeypa
 
     async def fake_call_converter_extract(source_url: str, ext: str):
         await asyncio.sleep(0.01)
-        return [(1, f"{ext}:{source_url}")]
+        return ConverterExtraction(
+            pages=[(1, f"{ext}:{source_url}")],
+            engine="opendataloader",
+        )
 
     async def fake_store_extracted_pages(document_id, user_id, kb_id, page_contents, parser, page_elements=None):
         stored.append((document_id, user_id, kb_id, page_contents, parser))
 
-    monkeypatch.setattr(service, "_call_converter_extract", fake_call_converter_extract)
-    monkeypatch.setattr(service, "_store_extracted_pages", fake_store_extracted_pages)
+    monkeypatch.setattr(service._converter, "extract", fake_call_converter_extract)
+    monkeypatch.setattr(service._pages, "store_extracted_pages", fake_store_extracted_pages)
 
     before_state = dict(service.__dict__)
 
@@ -465,9 +467,9 @@ async def test_process_opendataloader_uses_isolated_tempdirs_under_concurrency(m
 
     monkeypatch.setattr(ocr.tempfile, "TemporaryDirectory", RecordingTemporaryDirectory)
     monkeypatch.setattr(ocr, "_extract_pdf_in_process", fake_extract_pdf)
-    monkeypatch.setattr(service, "_store_extracted_pages", fake_store_extracted_pages)
-    monkeypatch.setattr(service, "_build_pdf_assets", fake_build_pdf_assets)
-    monkeypatch.setattr(service, "_upload_assets", fake_upload_assets)
+    monkeypatch.setattr(service._pages, "store_extracted_pages", fake_store_extracted_pages)
+    monkeypatch.setattr(service._pages, "build_pdf_assets", fake_build_pdf_assets)
+    monkeypatch.setattr(service._pages, "upload_assets", fake_upload_assets)
 
     await asyncio.gather(
         service._process_opendataloader("doc-a", "user-a", "kb-a", "user-a/doc-a/source.pdf"),

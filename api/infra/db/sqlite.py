@@ -9,16 +9,13 @@ import functools
 import json
 import logging
 import uuid
-from contextlib import asynccontextmanager
-from pathlib import Path
+from contextlib import asynccontextmanager, suppress
 
 import aiosqlite
-
+from infra.db.local_migrations import apply_migrations
 from services.highlight_merge import preserve_replies
 
 logger = logging.getLogger(__name__)
-
-_SCHEMA_PATH = Path(__file__).parent.parent.parent.parent / "shared" / "sqlite_schema.sql"
 
 _DOC_COLUMNS = (
     "id, user_id, filename, title, path, relative_path, source_kind, "
@@ -31,19 +28,15 @@ _DOC_COLUMNS = (
 
 def _row_to_dict(cursor: aiosqlite.Cursor, row: tuple) -> dict:
     cols = [d[0] for d in cursor.description]
-    d = dict(zip(cols, row))
+    d = dict(zip(cols, row, strict=False))
     if "tags" in d and isinstance(d["tags"], str):
         d["tags"] = json.loads(d["tags"])
     if "metadata" in d and isinstance(d["metadata"], str):
-        try:
+        with suppress(json.JSONDecodeError, TypeError):
             d["metadata"] = json.loads(d["metadata"])
-        except (json.JSONDecodeError, TypeError):
-            pass
     if "elements" in d and isinstance(d["elements"], str):
-        try:
+        with suppress(json.JSONDecodeError, TypeError):
             d["elements"] = json.loads(d["elements"])
-        except (json.JSONDecodeError, TypeError):
-            pass
     # Compatibility: add archived=False for local docs (never archived, just deleted)
     if "status" in d:
         d.setdefault("archived", False)
@@ -72,11 +65,9 @@ def _serialized(method):
         async with _write_lock:
             try:
                 return await method(self, *args, **kwargs)
-            except Exception:
-                try:
+            except BaseException:  # includes cancellation: never release the lock with a transaction open
+                with suppress(Exception):
                     await self._db.rollback()
-                except Exception:
-                    pass
                 raise
     return wrapper
 
@@ -89,61 +80,13 @@ async def serialized_write():
 
 
 async def create_pool(db_path: str, init_schema: bool = True) -> aiosqlite.Connection:
+    if init_schema:
+        await asyncio.to_thread(apply_migrations, db_path)
     db = await aiosqlite.connect(db_path)
     db.row_factory = None
     await db.execute("PRAGMA journal_mode=WAL")
     await db.execute("PRAGMA foreign_keys=ON")
     await db.execute("PRAGMA busy_timeout=5000")
-    if init_schema:
-        events_table = await db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'knowledge_base_events'",
-        )
-        had_events_table = await events_table.fetchone() is not None
-        schema = _SCHEMA_PATH.read_text(encoding='utf-8')
-        await db.executescript(schema)
-        # No migration runner: add workspace.kind to pre-existing DBs.
-        cur = await db.execute("PRAGMA table_info(workspace)")
-        if "kind" not in {row[1] for row in await cur.fetchall()}:
-            await db.execute("ALTER TABLE workspace ADD COLUMN kind TEXT NOT NULL DEFAULT 'wiki'")
-
-        # Honest, idempotent activity backfill for pre-existing workspaces.
-        # We know creation times, but updated_at also reflects processing and
-        # highlight writes, so it must never be treated as historical edits.
-        await db.execute(
-            "INSERT OR IGNORE INTO knowledge_base_events "
-            "(knowledge_base_id, user_id, event_type, subject_kind, subject_title, "
-            " event_key, occurred_at) "
-            "SELECT id, user_id, 'wiki.created', 'wiki', name, "
-            "       'kb:' || id || ':created', created_at FROM workspace",
-        )
-        await db.execute(
-            "INSERT OR IGNORE INTO knowledge_base_events "
-            "(knowledge_base_id, user_id, event_type, subject_kind, document_id, "
-            " document_number, document_version, subject_title, subject_path, "
-            " event_key, metadata, occurred_at) "
-            "SELECT (SELECT id FROM workspace LIMIT 1), d.user_id, "
-            "       CASE WHEN d.source_kind = 'wiki' THEN 'page.created' ELSE 'source.added' END, "
-            "       CASE WHEN d.source_kind = 'wiki' THEN 'wiki_page' ELSE 'source' END, "
-            "       d.id, d.document_number, d.version, "
-            "       COALESCE(NULLIF(d.title, ''), d.filename), d.path || d.filename, "
-            "       'doc:' || d.id || ':created', "
-            "       json_object('file_type', d.file_type, 'file_size', d.file_size), d.created_at "
-            "FROM documents d "
-            "WHERE d.source_kind <> 'asset' "
-            "  AND COALESCE(json_extract(d.metadata, '$.hidden'), 0) = 0 "
-            "  AND COALESCE(json_extract(d.metadata, '$.asset'), 0) = 0 "
-            "  AND NOT (d.path = '/wiki/' AND d.filename IN ('index.json', 'log.md', 'overview.md')) "
-            "ORDER BY d.created_at, d.id",
-        )
-        if not had_events_table:
-            await db.execute(
-                "INSERT OR IGNORE INTO knowledge_base_events "
-                "(knowledge_base_id, user_id, event_type, subject_kind, subject_title, "
-                " event_key) "
-                "SELECT id, user_id, 'tracking.started', 'wiki', name, "
-                "       'kb:' || id || ':tracking-started' FROM workspace",
-            )
-        await db.commit()
     return db
 
 
@@ -193,9 +136,8 @@ class SQLiteDocumentRepository:
         self, kb_id: str, user_id: str, filename: str, path: str,
     ) -> dict | None:
         cursor = await self._db.execute(
-            "SELECT * FROM documents WHERE knowledge_base_id = ? AND user_id = ? "
-            "AND filename = ? AND path = ? AND NOT archived",
-            (kb_id, user_id, filename, path),
+            "SELECT * FROM documents WHERE user_id = ? AND filename = ? AND path = ?",
+            (user_id, filename, path),
         )
         row = await cursor.fetchone()
         return _row_to_dict(cursor, row) if row else None
@@ -229,7 +171,7 @@ class SQLiteDocumentRepository:
     async def update_content(self, doc_id: str, user_id: str, content: str) -> dict | None:
         cursor = await self._db.execute(
             "UPDATE documents SET content = ?, file_size = ?, version = version + 1, "
-            "updated_at = datetime('now') WHERE id = ? "
+            "updated_at = datetime('now'), stale_since = NULL WHERE id = ? "
             "RETURNING id, content, version",
             (content, len(content.encode("utf-8")), doc_id),
         )
@@ -239,6 +181,9 @@ class SQLiteDocumentRepository:
 
     @_serialized
     async def update_metadata(self, doc_id: str, user_id: str, **fields) -> dict | None:
+        if "metadata" in fields:
+            # Read-modify-write: hold the write lock across processes (the MCP server writes this file too).
+            await self._db.execute("BEGIN IMMEDIATE")
         updates = []
         params = []
         for key, value in fields.items():
@@ -246,8 +191,10 @@ class SQLiteDocumentRepository:
                 updates.append("tags = ?")
                 params.append(json.dumps(value))
             elif key == "metadata":
-                updates.append("metadata = json_patch(COALESCE(metadata, '{}'), ?)")
-                params.append(json.dumps(value))
+                current = await self.get(doc_id)
+                existing = current["metadata"] if current and isinstance(current["metadata"], dict) else {}
+                updates.append("metadata = ?")
+                params.append(json.dumps({**existing, **value}))
             else:
                 updates.append(f"{key} = ?")
                 params.append(value)
@@ -294,10 +241,12 @@ class SQLiteDocumentRepository:
 
     async def get_by_source_url(self, url: str) -> dict | None:
         cursor = await self._db.execute(
-            "SELECT id, knowledge_base_id, title, path, filename, version, highlights "
+            "SELECT id, (SELECT id FROM workspace LIMIT 1) as knowledge_base_id, "
+            "title, path, filename, version, highlights "
             "FROM documents "
             "WHERE status != 'failed' "
             "AND json_extract(metadata, '$.source_url') = ? "
+            "AND COALESCE(json_extract(metadata, '$.asset'), 0) = 0 "
             "ORDER BY updated_at DESC LIMIT 1",
             (url,),
         )
@@ -361,10 +310,8 @@ class SQLiteDocumentRepository:
             await self._db.commit()
             return result
         except Exception:
-            try:
+            with suppress(Exception):
                 await self._db.rollback()
-            except Exception:
-                pass
             raise
 
     @_serialized
@@ -426,10 +373,8 @@ class SQLiteDocumentRepository:
             await self._db.commit()
             return result
         except Exception:
-            try:
+            with suppress(Exception):
                 await self._db.rollback()
-            except Exception:
-                pass
             raise
 
     @_serialized
@@ -480,11 +425,18 @@ class SQLiteDocumentRepository:
             await self._db.commit()
             return result
         except Exception:
-            try:
+            with suppress(Exception):
                 await self._db.rollback()
-            except Exception:
-                pass
             raise
+
+    @_serialized
+    async def reapply_highlights(self, doc_id: str) -> None:
+        """Re-materialize stored highlight annotations onto freshly rebuilt chunks."""
+        current = await self.get_highlights(doc_id)
+        if not current or not current["highlights"]:
+            return
+        await self._recompute_chunks_for_doc(doc_id, [], current["highlights"])
+        await self._db.commit()
 
     async def _recompute_chunks_for_doc(
         self, doc_id: str,
@@ -498,7 +450,9 @@ class SQLiteDocumentRepository:
         otherwise keep its stale annotation.
         """
         from services.highlight_chunks import (
-            ChunkRecord, all_affected_chunks, iter_chunks_with_annotations,
+            ChunkRecord,
+            all_affected_chunks,
+            iter_chunks_with_annotations,
         )
 
         cursor = await self._db.execute(

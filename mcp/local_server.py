@@ -27,6 +27,8 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LLM Wiki local MCP server")
     parser.add_argument("workspace", nargs="?", default=".", help="Path to workspace folder")
     parser.add_argument("--workspace", dest="workspace_flag", default=None, help="Path to workspace folder")
+    parser.add_argument("--transport", choices=["stdio", "streamable-http"], default="stdio")
+    parser.add_argument("--port", type=int, default=8100, help="Port for streamable-http transport")
     return parser.parse_args()
 
 
@@ -86,9 +88,10 @@ def main():
     loop = asyncio.new_event_loop()
     loop.run_until_complete(_init_workspace(workspace))
 
-    from mcp.server.fastmcp import FastMCP
     from tools import register
     from vaultfs import SqliteVaultFS
+
+    from mcp.server.fastmcp import FastMCP
 
     mcp = FastMCP(
         name="LLM Wiki",
@@ -109,7 +112,12 @@ def main():
         return "pong"
 
     logger.info("Local MCP server ready — workspace: %s", workspace)
-    asyncio.run(mcp.run_stdio_async())
+    if args.transport == "streamable-http":
+        mcp.settings.host = "127.0.0.1"
+        mcp.settings.port = args.port
+        asyncio.run(mcp.run_streamable_http_async())
+    else:
+        asyncio.run(mcp.run_stdio_async())
 
 
 if __name__ == "__main__":

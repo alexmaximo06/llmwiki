@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { getAuthErrorMessage, withAuthTimeout } from '@/lib/auth-errors'
+import { rememberReturnPath, safeReturnPath, withReturnTo } from '@/lib/returnTo'
 
 function LoginFormInner() {
   const [email, setEmail] = useState('')
@@ -17,9 +18,9 @@ function LoginFormInner() {
   useEffect(() => {
     const supabase = createClient()
     supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) router.replace('/wikis')
+      if (user) router.replace(safeReturnPath(returnTo))
     })
-  }, [router])
+  }, [router, returnTo])
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
@@ -36,14 +37,7 @@ function LoginFormInner() {
         return
       }
 
-      let dest = '/wikis'
-      if (returnTo && !returnTo.includes('\\')) {
-        try {
-          const url = new URL(returnTo, window.location.origin)
-          if (url.origin === window.location.origin) dest = `${url.pathname}${url.search}${url.hash}`
-        } catch { /* invalid URL, fall through to /wikis */ }
-      }
-      router.push(dest)
+      router.push(safeReturnPath(returnTo))
     } catch (err) {
       setError(getAuthErrorMessage(err))
     } finally {
@@ -56,6 +50,7 @@ function LoginFormInner() {
     setError('')
 
     try {
+      rememberReturnPath(safeReturnPath(returnTo))
       const supabase = createClient()
       const { error } = await withAuthTimeout(
         supabase.auth.signInWithOAuth({
@@ -138,7 +133,7 @@ function LoginFormInner() {
         </form>
         <p className="text-center text-sm text-muted-foreground">
           Don&apos;t have an account?{' '}
-          <a href="/signup" className="font-medium text-foreground underline">Sign up</a>
+          <a href={withReturnTo('/signup', returnTo)} className="font-medium text-foreground underline">Sign up</a>
         </p>
         <p className="text-center text-xs text-muted-foreground/60">
           By signing in, you agree to our{' '}

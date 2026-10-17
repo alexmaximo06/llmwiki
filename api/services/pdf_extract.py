@@ -18,6 +18,8 @@ EXTRACT_TIMEOUT_SECONDS = 180
 MAX_EXTRACT_JSON_BYTES = 64 * 1024 * 1024
 MAX_EXTRACT_PAGES = 10_000
 MAX_EXTRACT_ELEMENTS = 100_000
+# Text blocks and table cells nest arbitrarily deep in the extractor output.
+MAX_ELEMENT_DEPTH = 16
 
 _EXTRACT_SCRIPT = (
     "import sys, opendataloader_pdf\n"
@@ -27,7 +29,72 @@ _EXTRACT_SCRIPT = (
 )
 
 
-def _element_to_markdown(el: dict) -> str:
+def _inline_text(el: dict, depth: int = 0) -> str:
+    """Flatten an element and its descendants into single-line text."""
+    if depth > MAX_ELEMENT_DEPTH:
+        return ""
+    parts = []
+    content = el.get("content")
+    if isinstance(content, str) and content.strip():
+        parts.append(content.strip())
+    for kid in el.get("kids", []):
+        if not isinstance(kid, dict):
+            continue
+        nested = _inline_text(kid, depth + 1)
+        if nested:
+            parts.append(nested)
+    return " ".join(parts)
+
+
+def _escape_cell(text: str) -> str:
+    """Make text safe to place inside a markdown table cell."""
+    return text.replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _table_to_markdown(el: dict) -> str:
+    """Render a table element as a markdown table, treating row one as the header."""
+    grid = []
+    for row in el.get("rows", []):
+        if not isinstance(row, dict):
+            continue
+        cells = [
+            _escape_cell(_inline_text(cell))
+            for cell in row.get("cells", [])
+            if isinstance(cell, dict)
+        ]
+        if cells:
+            grid.append(cells)
+
+    if not any(any(cell for cell in row) for row in grid):
+        return ""
+
+    width = max(len(row) for row in grid)
+    padded = [row + [""] * (width - len(row)) for row in grid]
+    header, body = padded[0], padded[1:]
+
+    lines = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join("---" for _ in header) + " |",
+    ]
+    lines.extend("| " + " | ".join(row) + " |" for row in body)
+    return "\n".join(lines)
+
+
+def _text_block_to_markdown(el: dict, depth: int) -> str:
+    """Render a text block container by rendering each nested block."""
+    if depth > MAX_ELEMENT_DEPTH:
+        return ""
+    parts = []
+    for kid in el.get("kids", []):
+        if not isinstance(kid, dict):
+            continue
+        md = _element_to_markdown(kid, depth + 1)
+        if md:
+            parts.append(md)
+    return "\n\n".join(parts)
+
+
+def _element_to_markdown(el: dict, depth: int = 0) -> str:
     """Convert a single JSON element to markdown."""
     t = el.get("type", "")
     content = el.get("content", "")
@@ -47,6 +114,12 @@ def _element_to_markdown(el: dict) -> str:
             for child in item.get("kids", []):
                 lines.append(f"  - {child.get('content', '')}")
         return "\n".join(lines)
+
+    if t == "table":
+        return _table_to_markdown(el)
+
+    if t == "text block":
+        return _text_block_to_markdown(el, depth)
 
     if t == "image":
         # Don't include the data URI in markdown — images are stored separately
@@ -69,7 +142,7 @@ def _parse_data_uri(data_uri: str) -> tuple[bytes, str] | None:
         if "jpeg" in header or "jpg" in header:
             fmt = "jpeg"
         return base64.b64decode(b64), fmt
-    except Exception:
+    except ValueError:
         return None
 
 

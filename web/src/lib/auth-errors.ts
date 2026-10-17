@@ -1,3 +1,5 @@
+import type { Session, SupabaseClient, User } from '@supabase/supabase-js'
+
 export function getAuthErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? 'Unknown error')
   const lower = message.toLowerCase()
@@ -32,4 +34,45 @@ export async function withAuthTimeout<T>(promise: Promise<T>, timeoutMs = 10000)
   } finally {
     if (id) clearTimeout(id)
   }
+}
+
+const AUTH_REJECTION_STATUSES = new Set([400, 401, 403])
+
+export type AuthCheck =
+  | { kind: 'signed_in'; user: User; session: Session }
+  | { kind: 'signed_out' }
+  | { kind: 'unavailable' }
+
+function isRejection(error: { status?: number } | null): boolean {
+  return error?.status !== undefined && AUTH_REJECTION_STATUSES.has(error.status)
+}
+
+type UserVerification = ReturnType<SupabaseClient['auth']['getUser']>
+
+// Session first (local, may refresh), then server verification. A slow or failing auth
+// server must never sign the user out; only an explicit rejection does, even a late one.
+export async function checkAuth(supabase: SupabaseClient, onLateRejection: () => void): Promise<AuthCheck> {
+  let session: Session | null
+  try {
+    const { data, error } = await withAuthTimeout(supabase.auth.getSession())
+    if (error) return isRejection(error) ? { kind: 'signed_out' } : { kind: 'unavailable' }
+    session = data.session
+  } catch {
+    return { kind: 'unavailable' }
+  }
+  if (!session) return { kind: 'signed_out' }
+
+  const verification = supabase.auth.getUser()
+  try {
+    const { data: { user }, error } = await withAuthTimeout(verification)
+    if (user) return { kind: 'signed_in', user, session }
+    if (isRejection(error)) return { kind: 'signed_out' }
+  } catch {
+    watchForLateRejection(verification, onLateRejection)
+  }
+  return { kind: 'signed_in', user: session.user, session }
+}
+
+function watchForLateRejection(verification: UserVerification, onRejected: () => void): void {
+  verification.then(({ error }) => { if (isRejection(error)) onRejected() }, () => {})
 }

@@ -4,7 +4,6 @@ import * as React from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useUserStore, useKBStore } from '@/stores'
 import { apiFetch, isApiError } from '@/lib/api'
-import { withAuthTimeout } from '@/lib/auth-errors'
 
 const isLocal = process.env.NEXT_PUBLIC_MODE === 'local'
 
@@ -15,10 +14,12 @@ function isAuthFailure(err: unknown): boolean {
 interface AuthProviderProps {
   userId: string
   email: string
+  /** Token from the session the dashboard layout already verified; later rotations arrive via onAuthStateChange. */
+  accessToken: string
   children: React.ReactNode
 }
 
-export function AuthProvider({ userId, email, children }: AuthProviderProps) {
+export function AuthProvider({ userId, email, accessToken, children }: AuthProviderProps) {
   const router = useRouter()
   const pathname = usePathname()
   const setUser = useUserStore((s) => s.setUser)
@@ -36,7 +37,7 @@ export function AuthProvider({ userId, email, children }: AuthProviderProps) {
   React.useEffect(() => {
     if (isLocal) {
       setUser({ id: userId, email })
-      setAccessToken('local')
+      setAccessToken(accessToken)
       setOnboarded(true)
       fetchKBs()
       return
@@ -50,7 +51,7 @@ export function AuthProvider({ userId, email, children }: AuthProviderProps) {
       const supabase = createClient()
 
       const bounceToLogin = async () => {
-        try { await supabase.auth.signOut() } catch { /* best-effort */ }
+        try { await supabase.auth.signOut({ scope: 'local' }) } catch { /* best-effort */ }
         signOut()
         useKBStore.setState({ knowledgeBases: [], loading: false, error: null })
         if (!cancelled) router.replace('/login')
@@ -58,20 +59,8 @@ export function AuthProvider({ userId, email, children }: AuthProviderProps) {
 
       ;(async () => {
         try {
-          const { data: { user: authUser } } = await withAuthTimeout(supabase.auth.getUser())
-          if (cancelled) return
-          if (!authUser) {
-            await bounceToLogin()
-            return
-          }
-          const { data: { session } } = await withAuthTimeout(supabase.auth.getSession())
-          if (cancelled) return
-          if (!session) {
-            await bounceToLogin()
-            return
-          }
           setUser({ id: userId, email })
-          setAccessToken(session.access_token)
+          setAccessToken(accessToken)
           try {
             await fetchKBs({ throwOnError: true })
           } catch (err) {
@@ -82,7 +71,7 @@ export function AuthProvider({ userId, email, children }: AuthProviderProps) {
           }
 
           try {
-            const me = await apiFetch<{ onboarded: boolean }>('/v1/me', session.access_token)
+            const me = await apiFetch<{ onboarded: boolean }>('/v1/me', accessToken)
             if (cancelled) return
             setOnboarded(me.onboarded)
             if (!me.onboarded && pathnameRef.current !== '/onboarding') {
@@ -97,11 +86,12 @@ export function AuthProvider({ userId, email, children }: AuthProviderProps) {
         }
       })()
 
-      const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      // Only an explicit SIGNED_OUT logs out; a null INITIAL_SESSION can be a transient storage/refresh failure.
+      const { data } = supabase.auth.onAuthStateChange((event, session) => {
         if (cancelled) return
         if (session) {
           useUserStore.getState().setAccessToken(session.access_token)
-        } else {
+        } else if (event === 'SIGNED_OUT') {
           signOut()
           useKBStore.setState({ knowledgeBases: [], loading: false, error: null })
           router.replace('/login')
@@ -114,7 +104,7 @@ export function AuthProvider({ userId, email, children }: AuthProviderProps) {
       cancelled = true
       subscription?.unsubscribe()
     }
-  }, [userId, email, setUser, setAccessToken, setOnboarded, fetchKBs, router, signOut])
+  }, [userId, email, accessToken, setUser, setAccessToken, setOnboarded, fetchKBs, router, signOut])
 
   React.useEffect(() => {
     if (!isLocal && onboarded === false && pathname !== '/onboarding') {

@@ -2,10 +2,10 @@ import asyncio
 import logging
 
 import jwt as pyjwt
-from jwt import PyJWKClient
-from mcp.server.auth.provider import AccessToken, TokenVerifier
-
 from config import settings
+from jwt import PyJWKClient
+
+from mcp.server.auth.provider import AccessToken, TokenVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ class SupabaseTokenVerifier(TokenVerifier):
         except pyjwt.PyJWTError as e:
             logger.info("MCP auth rejected: %s: %s", type(e).__name__, e)
             return None
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning("MCP auth rejected: JWKS fetch failed: %s", e)
             return None
 

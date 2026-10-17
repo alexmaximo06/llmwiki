@@ -2,8 +2,6 @@
 
 import json
 
-import pytest
-
 
 def _make_kb(kb_id: str) -> dict:
     return {"id": kb_id, "name": "test-workspace", "slug": "test-workspace"}
@@ -98,8 +96,8 @@ class TestListComments:
         ])
 
         result = await CommentsHandler(instance, _make_kb(kb_id)).list_comments("**", 50)
-        done_line = next(l for l in result.split("\n") if "h-done" in l)
-        reopen_line = next(l for l in result.split("\n") if "h-reopen" in l)
+        done_line = next(line for line in result.split("\n") if "h-done" in line)
+        reopen_line = next(line for line in result.split("\n") if "h-reopen" in line)
         assert "_replied_" in done_line
         assert "_needs reply_" in reopen_line
 

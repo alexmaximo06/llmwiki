@@ -86,13 +86,13 @@
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
   --accent-blue: 220 40% 50%;
-  --sidebar: 30 3% 96%;
+  --sidebar: 30 8% 94.5%;
   --sidebar-foreground: 20 14% 4%;
   --sidebar-primary: 24 10% 10%;
   --sidebar-primary-foreground: 60 9% 98%;
-  --sidebar-accent: 30 6% 94%;
+  --sidebar-accent: 30 8% 90%;
   --sidebar-accent-foreground: 20 14% 10%;
-  --sidebar-border: 24 6% 90%;
+  --sidebar-border: 24 6% 87%;
   --sidebar-ring: 25 5% 45%;
 }
 
@@ -122,7 +122,7 @@
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
   --accent-blue: 220 35% 55%;
-  --sidebar: 20 14% 3%;
+  --sidebar: 20 10% 6%;
   --sidebar-foreground: 40 10% 90%;
   --sidebar-primary: 40 10% 90%;
   --sidebar-primary-foreground: 20 14% 4%;
@@ -271,8 +271,16 @@
   }
 }
 
+/* fill-mode must not retain the transform: a retained transform makes this a
+   containing block for position:fixed descendants (fullscreen viewers). */
 .animate-tab-in {
-  animation: tab-in 200ms ease-out both;
+  animation: tab-in 200ms ease-out backwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-tab-in {
+    animation: none;
+  }
 }
 
 /* Ensure overlays, sheets, popovers mirror the radius */

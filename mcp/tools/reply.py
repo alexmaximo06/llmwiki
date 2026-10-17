@@ -1,12 +1,13 @@
 """Reply tool — respond to a user's highlight or comment on a document."""
 
 import uuid
-from datetime import datetime, timezone
-
-from mcp.server.fastmcp import FastMCP, Context
+from datetime import UTC, datetime
 
 from vaultfs import VaultFS
 from vaultfs.highlights import find_highlight, parse_highlights_value
+
+from mcp.server.fastmcp import Context, FastMCP
+
 from .helpers import resolve_path
 
 MAX_REPLY_CHARS = 4000
@@ -48,7 +49,7 @@ class ReplyHandler:
             "id": uuid.uuid4().hex,
             "author": "agent",
             "text": text,
-            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "createdAt": datetime.now(UTC).isoformat(),
         }
         updated = await self.fs.add_highlight_reply(str(doc["id"]), highlight_id, reply)
         if updated is None:

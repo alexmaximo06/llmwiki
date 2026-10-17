@@ -84,3 +84,26 @@ export function flattenPages(nodes: WikiNode[]): WikiNode[] {
   walk(nodes)
   return out
 }
+
+// Maps a markdown link href to a wiki-relative page path ('concepts/attention.md').
+export function resolveWikiHref(href: string, activePath: string | null, knownPaths: Set<string>): string {
+  const target = decodeHref(href.split('#')[0])
+  if (target === '/wiki' || target.startsWith('/wiki/')) return target.replace(/^\/wiki\/?/, '')
+  if (target.startsWith('/')) return target.slice(1)
+  if (knownPaths.has(target) || !activePath) return target
+
+  const segments = activePath.split('/').slice(0, -1)
+  for (const part of target.split('/')) {
+    if (part === '..') segments.pop()
+    else if (part && part !== '.') segments.push(part)
+  }
+  return segments.join('/')
+}
+
+function decodeHref(href: string): string {
+  try {
+    return decodeURIComponent(href)
+  } catch {
+    return href
+  }
+}

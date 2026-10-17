@@ -14,18 +14,20 @@ const MarkdownClipViewer = dynamic(
 )
 
 function useDocumentUrl(documentId: string) {
-  const token = useUserStore((s) => s.accessToken)
+  // Depend on token presence, not its value: a refreshed token must not re-sign the URL and reload the viewer.
+  const hasToken = useUserStore((s) => Boolean(s.accessToken))
   const [url, setUrl] = React.useState<string | null>(null)
   const [error, setError] = React.useState(false)
 
   React.useEffect(() => {
+    const token = useUserStore.getState().accessToken
     if (!token) return
     let cancelled = false
     apiFetch<{ url: string }>(`/v1/documents/${documentId}/url`, token)
       .then((res) => { if (!cancelled) setUrl(res.url) })
       .catch(() => { if (!cancelled) setError(true) })
     return () => { cancelled = true }
-  }, [documentId, token])
+  }, [documentId, hasToken])
 
   return { url, error }
 }

@@ -1,9 +1,8 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
-
 from deps import get_kb_service
+from fastapi import APIRouter, Depends, HTTPException
 from services.base import KBService
 from services.types import CreateKB, UpdateKB, UpdateSharing
 

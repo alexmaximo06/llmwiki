@@ -192,7 +192,7 @@ export function NoteEditor({
         const fmMatch = raw.match(FRONTMATTER_RE)
         frontmatterRef.current = fmMatch ? fmMatch[0] : ''
         latestContentRef.current = body
-        editor?.commands.setContent(body)
+        editor?.commands.setContent(body, { emitUpdate: false })
 
         if (meta.date && !date) {
           setDate(meta.date)
@@ -201,7 +201,7 @@ export function NoteEditor({
         console.error('[NoteEditor] Failed to load content:', err)
         if (initialContent != null && !cancelled) {
           latestContentRef.current = initialContent
-          editor?.commands.setContent(initialContent)
+          editor?.commands.setContent(initialContent, { emitUpdate: false })
         }
       }
 
@@ -241,15 +241,14 @@ export function NoteEditor({
       ]
 
       if (shouldPatchMeta) {
-        const hasProps = Object.keys(latestPropertiesRef.current).length > 0
         promises.push(
           apiFetch(`/v1/documents/${documentId}`, token, {
             method: 'PATCH',
             body: JSON.stringify({
               title: latestTitleRef.current || null,
-              tags: latestTagsRef.current.length > 0 ? latestTagsRef.current : null,
+              tags: latestTagsRef.current,
               date: latestDateRef.current || null,
-              metadata: hasProps ? { properties: latestPropertiesRef.current } : null,
+              metadata: { properties: latestPropertiesRef.current },
             }),
           }),
         )
@@ -311,15 +310,14 @@ export function NoteEditor({
             ]
 
             if (shouldPatchMeta) {
-              const hasProps = Object.keys(propsToSave).length > 0
               promises.push(
                 apiFetch(`/v1/documents/${docId}`, token, {
                   method: 'PATCH',
                   body: JSON.stringify({
                     title: titleToSave || null,
-                    tags: tagsToSave.length > 0 ? tagsToSave : null,
+                    tags: tagsToSave,
                     date: dateToSave || null,
-                    metadata: hasProps ? { properties: propsToSave } : null,
+                    metadata: { properties: propsToSave },
                   }),
                 }),
               )

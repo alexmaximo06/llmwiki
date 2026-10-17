@@ -23,6 +23,14 @@ class DownloadedPdf:
     filename: str
 
 
+@dataclass
+class ConverterExtraction:
+    """Per-page markdown from the converter plus the engine that produced it."""
+
+    pages: list[tuple[int, str]]
+    engine: str
+
+
 class CreateKB(BaseModel):
     name: str
     description: str | None = None
@@ -203,6 +211,13 @@ class UpdateMetadata(BaseModel):
     # knowledge_base_id is the move target. Server validates ownership of the
     # target KB and cascades the kb_id update to chunks/pages.
     knowledge_base_id: str | None = None
+
+    def changed_fields(self) -> dict:
+        """Fields the client sent; explicit null clears tags/date and is ignored for the rest."""
+        fields = self.model_dump(exclude_unset=True)
+        if "tags" in fields and fields["tags"] is None:
+            fields["tags"] = []
+        return {k: v for k, v in fields.items() if v is not None or k == "date"}
 
 
 class BulkDelete(BaseModel):

@@ -1,10 +1,10 @@
 import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware as _BaseCORSMiddleware
-from starlette.types import ASGIApp, Receive, Scope, Send
+from starlette.types import Receive, Scope, Send
 
 
 class CORSMiddleware(_BaseCORSMiddleware):
@@ -38,10 +38,10 @@ if settings.LOGFIRE_TOKEN:
     logfire.configure(token=settings.LOGFIRE_TOKEN, service_name="supavault-api")
     logfire.instrument_asyncpg()
 
-from routes.health import router as health_router
-from routes.knowledge_bases import router as knowledge_bases_router
 from routes.documents import router as documents_router
 from routes.events import router as events_router
+from routes.health import router as health_router
+from routes.knowledge_bases import router as knowledge_bases_router
 from routes.me import router as me_router
 from routes.usage import router as usage_router
 
@@ -108,10 +108,11 @@ async def _local_lifespan_inner(app: FastAPI):
     """Local mode: SQLite + local filesystem + single-user auth."""
     import uuid
     from pathlib import Path
-    from infra.db.sqlite import create_pool as create_sqlite_pool
-    from infra.storage.local import LocalStorageService
+
     from infra.auth.local import LocalAuthProvider
+    from infra.db.sqlite import create_pool as create_sqlite_pool
     from infra.local_paths import index_cache_root, index_db_path, index_root
+    from infra.storage.local import LocalStorageService
 
     workspace = Path(settings.WORKSPACE_PATH).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
@@ -157,6 +158,7 @@ async def _local_lifespan_inner(app: FastAPI):
 async def _local_lifespan(app: FastAPI):
     db = await _local_lifespan_inner(app)
     from pathlib import Path
+
     from infra.db.sqlite import create_pool as create_sqlite_pool
     from infra.local_paths import index_db_path
     workspace = Path(app.state.workspace_path)
@@ -182,16 +184,12 @@ async def _local_lifespan(app: FastAPI):
         yield
     finally:
         reconcile_task.cancel()
-        try:
+        with suppress(asyncio.CancelledError):
             await reconcile_task
-        except asyncio.CancelledError:
-            pass
         if watcher_task:
             watcher_task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await watcher_task
-            except asyncio.CancelledError:
-                pass
         await reconcile_db.close()
         await watcher_db.close()
         await db.close()
@@ -203,11 +201,10 @@ app = FastAPI(title="LLM Wiki API", lifespan=lifespan)
 # broad ceiling. Hot endpoints can add tighter `@limiter.limit(...)` overrides.
 # Skip in local mode where there's only one user.
 if settings.MODE != "local":
+    from infra.rate_limit import limiter
     from slowapi import _rate_limit_exceeded_handler
     from slowapi.errors import RateLimitExceeded
     from slowapi.middleware import SlowAPIMiddleware
-
-    from infra.rate_limit import limiter
 
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -262,20 +259,21 @@ app.include_router(documents_router)
 app.include_router(events_router)
 
 if settings.MODE == "local":
-    from routes.local_upload import router as local_upload_router
-    from routes.files import router as files_router, set_workspace_root
+    from routes.files import router as files_router
+    from routes.files import set_workspace_root
     from routes.local_graph import router as local_graph_router
+    from routes.local_upload import router as local_upload_router
     app.include_router(local_upload_router)
     app.include_router(files_router)
     app.include_router(local_graph_router)
     set_workspace_root(settings.WORKSPACE_PATH)
 else:
+    from infra.tus import router as tus_router
     from routes.api_keys import router as api_keys_router
     from routes.graph import router as graph_router
-    from routes.ws import router as ws_router
     from routes.public import router as public_router
     from routes.quiz import router as quiz_router
-    from infra.tus import router as tus_router
+    from routes.ws import router as ws_router
     app.include_router(api_keys_router)
     app.include_router(tus_router)
     app.include_router(graph_router)

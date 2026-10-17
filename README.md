@@ -140,7 +140,7 @@ LLM Wiki adds exactly two things to the folder you point it at. Your source file
 ```
 
 - **`wiki/`** holds ordinary Markdown files. Claude writes and updates them over MCP, but they're just files — open them in any editor, commit them to git, edit them by hand.
-- **`.llmwiki/`** is a derived layer: a local SQLite search index (`index.db`) and extracted artifacts (`cache/`). It's safe to delete — `./llmwiki reindex ~/research` rebuilds it from your source files.
+- **`.llmwiki/`** holds the SQLite index (`index.db`) and extracted artifacts (`cache/`). Search can be rebuilt from your files with `./llmwiki reindex ~/research`, but highlights, comments, agent replies, course progress and clip metadata live only in `index.db` — back it up, and don't delete it. `reindex` saves a timestamped copy before rebuilding.
 
 The filesystem is the source of truth; the index just makes it fast to search. A background watcher notices changes you make outside the app and re-indexes them, so editing a wiki page in your own editor stays in sync.
 

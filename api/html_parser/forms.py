@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 from bs4.element import Tag
 
@@ -12,13 +11,13 @@ class FormElement:
     name: str = ""
     label: str = ""
     value: str = ""
-    options: List[str] = field(default_factory=list)
+    options: list[str] = field(default_factory=list)
 
 
 class FormExtractor:
 
     def __init__(self):
-        self.elements: List[FormElement] = []
+        self.elements: list[FormElement] = []
 
     def process_form(self, node: Tag, inner: str) -> str:
         action = node.get("action", "")

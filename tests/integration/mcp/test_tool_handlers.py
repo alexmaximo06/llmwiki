@@ -7,7 +7,6 @@ Uses SqliteVaultFS with a temp workspace — no Postgres needed.
 import json
 
 import pytest
-from tests.integration.mcp.conftest import TEST_USER_ID
 
 
 def _make_kb(kb_id: str) -> dict:
@@ -26,8 +25,9 @@ class _AcceptDeleteContext:
 class TestWriteReadFlow:
 
     async def test_edit_tool_schema_uses_anthropic_string_names(self):
-        from mcp.server.fastmcp import FastMCP
         from tools.write import register
+
+        from mcp.server.fastmcp import FastMCP
 
         mcp = FastMCP("test")
         register(mcp, lambda _ctx: "user", lambda _user_id: None)
@@ -46,8 +46,8 @@ class TestWriteReadFlow:
 
     async def test_create_then_read_round_trip(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -136,8 +136,8 @@ class TestWriteReadFlow:
 
     async def test_create_uses_frontmatter_tags_as_index_source(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.search import SearchHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -166,8 +166,8 @@ class TestWriteReadFlow:
 
     async def test_create_with_overwrite_replaces_content(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -182,8 +182,8 @@ class TestWriteReadFlow:
 
     async def test_edit_replaces_text(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -196,6 +196,107 @@ class TestWriteReadFlow:
         content = await reader.read("editable.md", "", None, False)
         assert "Goodbye world" in content
         assert "Hello world" not in content
+
+    async def test_edit_and_append_refuse_binary_sources(self, workspace, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+
+        (workspace / "paper.pdf").write_bytes(b"%PDF-1.7 original bytes")
+        await instance.create_document(kb_id, "paper.pdf", "Paper", "/", "pdf", "Extracted text.", ["source"])
+        writer = WriteHandler(instance, _make_kb(kb_id))
+
+        assert "read-only" in await writer.edit("/paper.pdf", "Extracted", "Changed")
+        assert "read-only" in await writer.append("/paper.pdf", "more")
+        assert (workspace / "paper.pdf").read_bytes() == b"%PDF-1.7 original bytes"
+
+    async def test_edit_keeps_app_metadata_and_tracks_frontmatter_description(self, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+        from vaultfs.sqlite import SqliteVaultFS
+
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        page = "---\ndescription: First take\n---\n# Lesson\n\nBody text."
+        await writer.create("/wiki/", "Lesson", page, ["course"], "", False)
+        db = SqliteVaultFS._db_or_raise()
+        await db.execute(
+            "UPDATE documents SET metadata = json_set(metadata, '$.course', json('{\"status\":\"complete\"}'), "
+            "'$.source_url', 'https://example.com') WHERE filename = 'lesson.md'",
+        )
+        await db.commit()
+
+        await writer.edit("/wiki/lesson.md", "description: First take\n", "")
+
+        cursor = await db.execute("SELECT metadata FROM documents WHERE filename = 'lesson.md'")
+        metadata = json.loads((await cursor.fetchone())[0])
+        assert metadata["course"] == {"status": "complete"}
+        assert metadata["source_url"] == "https://example.com"
+        assert "description" not in metadata
+
+    async def test_create_refuses_unindexed_files_and_hidden_folders(self, workspace, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        (workspace / "notes").mkdir()
+        (workspace / "notes" / "plan.md").write_text("my own file")
+
+        clobber = await writer.create("/notes/", "Plan", "agent text", ["x"], "", False)
+        hidden = await writer.create("/.claude/", "settings.json", '{"hooks": {}}', ["x"], "", False)
+
+        assert "already exists on disk" in clobber
+        assert (workspace / "notes" / "plan.md").read_text() == "my own file"
+        assert "not writable" in hidden
+        assert not (workspace / ".claude").exists()
+
+    async def test_create_uses_the_filename_given_in_path(self, workspace, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        result = await writer.create("wiki/concepts/attention.md", "Attention Mechanisms", "# Attention", ["ml"], "", False)
+
+        assert "`/wiki/concepts/attention.md`" in result
+        assert (workspace / "wiki" / "concepts" / "attention.md").exists()
+        doc = await instance.get_document(kb_id, "attention.md", "/wiki/concepts/")
+        assert doc["title"] == "Attention Mechanisms"
+
+    async def test_create_keeps_an_explicit_filename_verbatim(self, workspace, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        await writer.create("/notes/README.txt", "Readme", "plain text", ["x"], "", False)
+
+        assert (workspace / "notes" / "README.txt").read_text().endswith("plain text")
+        doc = await instance.get_document(kb_id, "README.txt", "/notes/")
+        assert doc["file_type"] == "txt"
+
+    async def test_edit_clears_the_pages_stale_flag(self, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+        from vaultfs.sqlite import SqliteVaultFS
+
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        await writer.create("/wiki/", "Topic", "# Topic\n\nOld claim.", ["x"], "", False)
+        db = SqliteVaultFS._db_or_raise()
+        await db.execute("UPDATE documents SET stale_since = datetime('now') WHERE filename = 'topic.md'")
+        await db.commit()
+
+        await writer.edit("/wiki/topic.md", "Old claim.", "New claim.")
+
+        cursor = await db.execute("SELECT stale_since FROM documents WHERE filename = 'topic.md'")
+        assert (await cursor.fetchone())[0] is None
+
+    async def test_named_footnote_citations_become_graph_edges(self, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+
+        source = await instance.create_document(kb_id, "paper.pdf", "Paper", "/", "pdf", "", ["source"])
+        writer = WriteHandler(instance, _make_kb(kb_id))
+        await writer.create("/wiki/", "Findings", "# Findings\n\nClaim.[^smith2020]\n\n[^smith2020]: paper.pdf, p.3", ["x"], "", False)
+
+        backlinks = await instance.get_backlinks(str(source["id"]))
+        assert [b["reference_type"] for b in backlinks] == ["cites"]
 
     async def test_wiki_write_clears_own_stale_flag(self, fs):
         instance, kb_id = fs
@@ -236,8 +337,8 @@ class TestWriteReadFlow:
 
     async def test_edit_keeps_index_synced_to_frontmatter_tags(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.search import SearchHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -258,8 +359,8 @@ class TestWriteReadFlow:
 
     async def test_append_adds_content(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -275,8 +376,8 @@ class TestWriteReadFlow:
 
     async def test_append_inserts_before_trailing_footnotes(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -298,8 +399,8 @@ class TestWriteReadFlow:
 
     async def test_append_renumbers_colliding_footnotes(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -326,8 +427,8 @@ class TestWriteReadFlow:
 
     async def test_append_keeps_index_synced_to_frontmatter_tags(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.search import SearchHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -359,8 +460,8 @@ class TestLintTool:
 
     async def test_lint_passes_clean_wiki_page(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.lint import LintHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -640,8 +741,8 @@ class TestReadModes:
 
     async def test_read_falls_back_to_title(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -653,8 +754,8 @@ class TestReadModes:
 
     async def test_read_sections_filters_headings(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -668,8 +769,8 @@ class TestReadModes:
 
     async def test_read_glob_batch(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -702,6 +803,32 @@ class TestReadModes:
         assert "Page one content" in result
         assert "Page two content" in result
 
+    async def test_read_pages_returns_extracted_page_images(self, workspace, fs, insert_page):
+        instance, kb_id = fs
+        from tools.read import ReadHandler
+        from vaultfs.sqlite import SqliteVaultFS
+
+        png = b"\x89PNG\r\n\x1a\nfake-image-bytes"
+        doc = await instance.create_document(kb_id, "paper.pdf", "Paper", "/", "pdf", "", ["source"])
+        asset = await instance.create_document(
+            kb_id, "page-001-image-01.png", "Figure", "/paper.assets/", "png", "", ["asset"],
+        )
+        (workspace / "paper.assets").mkdir()
+        (workspace / "paper.assets" / "page-001-image-01.png").write_bytes(png)
+        await insert_page(
+            str(doc["id"]), 1, "Figure 1 shows the result.",
+            {"images": [{"id": str(asset["id"]), "filename": "page-001-image-01.png"}]},
+        )
+        db = SqliteVaultFS._db_or_raise()
+        await db.execute("UPDATE documents SET page_count = 1 WHERE id = ?", (str(doc["id"]),))
+        await db.commit()
+
+        result = await ReadHandler(instance, _make_kb(kb_id)).read("paper.pdf", "1", None, True)
+
+        images = [block for block in result if getattr(block, "type", None) == "image"]
+        assert len(images) == 1
+        assert images[0].mimeType == "image/png"
+
     async def test_read_pages_materializes_only_selected_page_annotations(self, fs, insert_page):
         instance, kb_id = fs
         from tools.read import ReadHandler
@@ -733,11 +860,9 @@ class TestReadModes:
 
     async def test_read_backlinks_shown(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.read import ReadHandler
 
         kb = _make_kb(kb_id)
-        writer = WriteHandler(instance, kb)
         reader = ReadHandler(instance, kb)
 
         target = await instance.create_document(kb_id, "target.md", "Target", "/wiki/", "md", "target content", ["tag"])
@@ -752,8 +877,8 @@ class TestSearchDeleteLifecycle:
 
     async def test_search_list_groups_sources_and_wiki(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.search import SearchHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -768,8 +893,8 @@ class TestSearchDeleteLifecycle:
 
     async def test_search_list_filters_by_tags(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.search import SearchHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -784,8 +909,8 @@ class TestSearchDeleteLifecycle:
 
     async def test_search_chunks_after_indexing(self, fs, insert_chunk):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.search import SearchHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -826,8 +951,8 @@ class TestSearchDeleteLifecycle:
 
     async def test_delete_exact_path(self, fs):
         instance, kb_id = fs
-        from tools.write import WriteHandler
         from tools.delete import DeleteHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)
@@ -872,10 +997,10 @@ class TestSearchDeleteLifecycle:
 
     async def test_full_lifecycle(self, fs, insert_chunk):
         instance, kb_id = fs
-        from tools.write import WriteHandler
+        from tools.delete import DeleteHandler
         from tools.read import ReadHandler
         from tools.search import SearchHandler
-        from tools.delete import DeleteHandler
+        from tools.write import WriteHandler
 
         kb = _make_kb(kb_id)
         writer = WriteHandler(instance, kb)

@@ -3,10 +3,9 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from starlette.responses import StreamingResponse
-
 from infra.rate_limit import limiter
 from services.base import PublicWikiService
+from starlette.responses import StreamingResponse
 
 router = APIRouter(prefix="/v1/public", tags=["public"])
 
@@ -68,8 +67,8 @@ async def get_public_wiki_asset(
         raise HTTPException(status_code=503, detail="Storage not configured")
     try:
         body = await s3.download_bytes(key)
-    except Exception:
-        raise HTTPException(status_code=404, detail="Asset not found")
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail="Asset not found") from e
 
     media_type = _media_type_for_key(key)
 

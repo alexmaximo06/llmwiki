@@ -75,7 +75,6 @@ _FILE_SIGNATURES: dict[str, tuple[tuple[bytes, ...], ...]] = {
     "xlsx": ((b"PK\x03\x04",),),
     "ppt":  ((b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),),
     "doc":  ((b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),),
-    "xls":  ((b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),),
     # CSV and HTML are text — no reliable magic bytes. Skip the strict check
     # for these; the parser layer is more forgiving and they're low-risk.
 }
@@ -90,7 +89,7 @@ def _validate_file_signature(temp_path: Path, ext: str) -> None:
         with open(temp_path, "rb") as f:
             head = f.read(16)
     except OSError as e:
-        raise HTTPException(status_code=400, detail=f"Could not read upload: {e}")
+        raise HTTPException(status_code=400, detail=f"Could not read upload: {e}") from e
     # WebP is a RIFF container; check both the RIFF magic and the WEBP fourcc.
     if ext == "webp":
         if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
@@ -117,7 +116,7 @@ ALLOWED_EXTENSIONS = {
     ".docx": "docx", ".doc": "doc",
     ".png": "png", ".jpg": "jpg", ".jpeg": "jpeg",
     ".webp": "webp", ".gif": "gif",
-    ".xlsx": "xlsx", ".xls": "xls", ".csv": "csv",
+    ".xlsx": "xlsx", ".csv": "csv",
     ".html": "html", ".htm": "html",
 }
 CONTENT_TYPES = {
@@ -129,7 +128,7 @@ CONTENT_TYPES = {
     "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
     "webp": "image/webp", "gif": "image/gif",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "xls": "application/vnd.ms-excel", "csv": "text/csv",
+    "csv": "text/csv",
     "html": "text/html", "htm": "text/html",
 }
 
@@ -170,8 +169,8 @@ def _parse_metadata(header: str) -> dict[str, str]:
         if len(parts) > 1:
             try:
                 value = b64decode(parts[1]).decode("utf-8")
-            except Exception:
-                raise HTTPException(status_code=400, detail=f"Invalid base64 in Upload-Metadata key '{key}'")
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid base64 in Upload-Metadata key '{key}'") from e
         else:
             value = ""
         result[key] = value
@@ -337,8 +336,8 @@ async def tus_create(request: Request):
         raise HTTPException(status_code=400, detail="Missing Upload-Length header")
     try:
         upload_length = int(upload_length_str)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid Upload-Length")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid Upload-Length") from e
     if upload_length < 1:
         raise HTTPException(status_code=400, detail="Upload-Length must be positive")
     if upload_length > MAX_SIZE:
@@ -372,8 +371,8 @@ async def tus_create(request: Request):
     try:
         import uuid as _uuid
         _uuid.UUID(kb_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid knowledge_base_id format")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid knowledge_base_id format") from e
 
     kb_owner = await pool.fetchval(
         "SELECT user_id::text FROM knowledge_bases WHERE id = $1::uuid",
@@ -459,8 +458,8 @@ async def tus_patch(upload_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Missing Upload-Offset header")
     try:
         client_offset = int(offset_str)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid Upload-Offset")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid Upload-Offset") from e
 
     # TUS offsets are compare-and-append state. Serialize the whole operation,
     # including finalization, so concurrent PATCH requests cannot both pass the
@@ -507,8 +506,8 @@ async def tus_patch(upload_id: str, request: Request):
                 headers["X-Document-Id"] = document_id
             except HTTPException:
                 raise
-            except Exception:
+            except Exception as e:
                 logger.exception("TUS finalization failed for upload %s", upload_id)
-                raise HTTPException(status_code=500, detail="Finalization failed")
+                raise HTTPException(status_code=500, detail="Finalization failed") from e
 
         return Response(status_code=204, headers=headers)
