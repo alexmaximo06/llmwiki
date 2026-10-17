@@ -32,9 +32,10 @@ def _path_error(path: str) -> str | None:
     if not rest:
         return None
     for segment in rest.split("/"):
+        # Dot segments cover `.`/`..` and hidden folders, which writes refuse and the watcher ignores.
         if (
             not segment
-            or segment in (".", "..")
+            or segment.startswith(".")
             or segment != segment.strip()
             or segment.endswith(".")
             or _INVALID_SEGMENT_RE.search(segment)

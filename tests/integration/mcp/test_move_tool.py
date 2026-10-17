@@ -138,6 +138,7 @@ async def test_rename_keeps_the_file_type(handlers, workspace):
         ("/wiki/a.md", "/wiki/overview.md", "reserved for a structural wiki page"),
         ("/notes.md", "/wiki/", "outside `/wiki/`"),
         ("/wiki/a.md", "/wiki/../escape.md", "not a valid wiki path"),
+        ("/wiki/a.md", "/wiki/.hidden/", "not a valid wiki path"),
         ("/wiki/games/", "/wiki/games/sub/", "into itself"),
         ("/wiki/", "/wiki/elsewhere/", "wiki root can't be moved"),
         ("/wiki/missing.md", "/wiki/games/", "not found"),
