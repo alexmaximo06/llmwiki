@@ -10,6 +10,17 @@ logger = logging.getLogger(__name__)
 _CITATION_RE = re.compile(r"\[\^[^\]]+\]:\s*(.+)$", re.MULTILINE)
 WIKI_LINK_RE = re.compile(r"(?<!!)\[(?:[^\]]*)\]\(([^)]+)\)")
 _IMAGE_HREF_RE = re.compile(r"\.(png|jpg|jpeg|gif|webp|svg)$", re.IGNORECASE)
+_FENCED_CODE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,}).*?^[ \t]*\1", re.MULTILINE | re.DOTALL)
+# Single-line only: a stray unmatched backtick must not hide links on later lines.
+_INLINE_CODE_RE = re.compile(r"(`+)[^`\n]*?\1")
+
+
+def mask_code(content: str) -> str:
+    """Blank out fenced blocks and inline code, keeping offsets, so `vtbl[7](a)` isn't read as a link."""
+    def blank(match: re.Match) -> str:
+        return re.sub(r"[^\n]", " ", match.group(0))
+
+    return _INLINE_CODE_RE.sub(blank, _FENCED_CODE_RE.sub(blank, content))
 
 
 def _parse_citation_filename(raw: str) -> tuple[str, int | None]:
@@ -71,7 +82,7 @@ def lookup_wiki_path(link_path: str, wiki_path_map: dict):
 def _parse_wiki_links(content: str, current_dir: str) -> list[str]:
     """Extract internal wiki link paths, resolved relative to current_dir."""
     paths = []
-    for match in WIKI_LINK_RE.finditer(content):
+    for match in WIKI_LINK_RE.finditer(mask_code(content)):
         resolved = resolve_wiki_href(match.group(1), current_dir)
         if resolved:
             paths.append(resolved)

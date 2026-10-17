@@ -177,6 +177,23 @@ class TestWikiLinkParsing:
         links = _parse_wiki_links("[Img](data:image/png;base64,abc)", "")
         assert links == []
 
+    def test_ignores_link_shapes_inside_code(self):
+        from tools.references import _parse_wiki_links
+        content = (
+            "Calls `actor->vtbl[7](actor, 1, 3)` then [Real](real.md).\n\n"
+            "  ```c\n  f = table[17](12);\n  ```\n"
+            "A stray ` backtick\nstill leaves [Next](next.md) visible."
+        )
+        assert _parse_wiki_links(content, "") == ["real.md", "next.md"]
+
+    def test_mask_code_keeps_offsets(self):
+        from tools.references import mask_code
+        content = "a `x[1](y)` b\n```\n[c](d)\n```\n"
+        masked = mask_code(content)
+        assert len(masked) == len(content)
+        assert "[1](y)" not in masked and "[c](d)" not in masked
+        assert masked.count("\n") == content.count("\n")
+
 
 @pytest.mark.asyncio
 async def test_read_webclip_returns_asset_images_when_requested():

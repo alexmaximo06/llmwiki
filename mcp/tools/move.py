@@ -10,7 +10,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
 from .helpers import deep_link, resolve_path
-from .references import WIKI_LINK_RE, lookup_wiki_path, resolve_wiki_href, update_references
+from .references import WIKI_LINK_RE, lookup_wiki_path, mask_code, resolve_wiki_href, update_references
 
 _WIKI_ROOT = "/wiki/"
 _PROTECTED_PATHS = {"/wiki/overview.md", "/wiki/log.md", "/wiki/index.json"}
@@ -79,7 +79,8 @@ def _rewrite_page_links(
     """Re-point links whose target moved, or that this page's own move broke."""
     page_moved = old_dir != new_dir
     replacements: list[tuple[int, int, str]] = []
-    for match in WIKI_LINK_RE.finditer(content):
+    # Match on a code-masked copy (same offsets) so text inside code is never rewritten.
+    for match in WIKI_LINK_RE.finditer(mask_code(content)):
         target_href, hashmark, fragment = match.group(1).partition("#")
         if not target_href:
             continue
