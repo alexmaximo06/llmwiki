@@ -596,6 +596,47 @@ class TestLintTool:
         assert "dangling-link" in result
         assert "unresolved-citation" in result
 
+    async def test_lint_accepts_local_provenance_footnotes(self, fs):
+        instance, kb_id = fs
+        from tools.lint import LintHandler
+
+        linter = LintHandler(instance, _make_kb(kb_id))
+        await instance.create_document(
+            kb_id,
+            "provenance.md",
+            "Provenance",
+            "/wiki/",
+            "md",
+            (
+                "---\n"
+                "title: Provenance\n"
+                "description: Evidence outside the wiki.\n"
+                "date: 2026-10-17\n"
+                "tags: [alpha, beta]\n"
+                "---\n\n"
+                "Claim.[^1] Other claim.[^2]\n\n"
+                "[^1]: Local: IDA session on game.xex, 2026-10-09\n"
+                "[^2]: missing.pdf, p.1"
+            ),
+            ["alpha", "beta"],
+        )
+
+        result = await linter.run(path="/wiki/provenance.md", include_graph=False)
+        assert "footnote `^1`" not in result
+        assert "footnote `^2` cites `missing.pdf`" in result
+
+    async def test_lint_applies_only_the_orphan_check_to_wiki_assets(self, fs):
+        instance, kb_id = fs
+        from tools.lint import LintHandler
+
+        linter = LintHandler(instance, _make_kb(kb_id))
+        await instance.create_document(kb_id, "evidence.csv", "evidence.csv", "/wiki/", "csv", "a,b\n1,2", ["data"])
+        await instance.create_document(kb_id, "other.md", "Other", "/wiki/", "md", "no frontmatter", ["tag"])
+
+        result = await linter.run(path="/wiki/evidence.csv")
+        assert "missing-frontmatter" not in result
+        assert "[orphan-page] `/wiki/evidence.csv`" in result
+
     async def test_lint_reports_citation_graph_mismatch(self, fs):
         instance, kb_id = fs
         from tools.lint import LintHandler

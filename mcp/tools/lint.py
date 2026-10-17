@@ -28,6 +28,9 @@ _ROOT_PAGES = frozenset({"/wiki/overview.md", "/wiki/index.md", "/wiki/readme.md
 _LEDGER_PAGES = frozenset({"/wiki/log.md", "/wiki/plan.md"})
 _MATCH_ALL_PATHS = frozenset({"*", "**", "**/*"})
 _MAX_ISSUES_PER_GROUP = 40
+# Footnotes starting with this name evidence that can't be uploaded (debugger
+# sessions, memory dumps, commits), so they are provenance, not source citations.
+_LOCAL_PROVENANCE_PREFIX = "local:"
 
 Scope = Literal["all", "wiki", "sources"]
 
@@ -121,6 +124,10 @@ class LintHandler:
     # ----- per-page checks -------------------------------------------------
 
     async def _lint_wiki_page(self, doc: dict, ctx: LintContext, include_graph: bool) -> list[LintIssue]:
+        if doc.get("file_type") != "md":
+            # Assets (CSV, SVG, JSON…) are embedded by pages; page conventions don't apply.
+            return self._lint_orphan(doc, ctx) if include_graph else []
+
         path = self._doc_path(doc)
         content = doc.get("content") or ""
         meta = _parse_frontmatter(content)
@@ -212,6 +219,8 @@ class LintHandler:
         path = self._doc_path(doc)
         issues: list[LintIssue] = []
         for footnote_id, raw in _FOOTNOTE_DEF_RE.findall(content):
+            if raw.strip().lower().startswith(_LOCAL_PROVENANCE_PREFIX):
+                continue
             filename, _page = _parse_citation_filename(raw)
             if not self._resolve_source(filename, source_lookup):
                 issues.append(LintIssue(

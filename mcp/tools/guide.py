@@ -152,6 +152,7 @@ Rules:
 - Add page numbers for PDFs: `paper.pdf, p.3`
 - One citation per claim — don't batch unrelated claims
 - Citations render as hoverable popover badges in the UI
+- Evidence that can't be uploaded (a debugger session, memory dump, registry read, commit) is cited as local provenance: start the footnote with `Local:`, e.g. `[^2]: Local: IDA session on game.xex, 2026-10-09`. Lint accepts it; prefer an uploaded source whenever one exists.
 
 ### Cross-References
 Link between wiki pages using standard markdown links to other wiki paths.
