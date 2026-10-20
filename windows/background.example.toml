@@ -1,0 +1,39 @@
+# LLM Wiki background settings (read by windows\llmwiki_background.py).
+# After editing, restart the service (elevated PowerShell):  Restart-Service llmwiki
+# Use single quotes for Windows paths (TOML literal strings keep backslashes).
+# Use full paths everywhere: a service running as LocalSystem has a different %LOCALAPPDATA%.
+
+# The wiki folder. The launcher waits until it exists (e.g. until the vault is unlocked).
+# As a service, a Cryptomator vault's drive letter is invisible: use its network path,
+# from (Get-PSDrive G).DisplayRoot, e.g. '\\cryptomator-vault\<vault id>\<name>\llmdata'.
+workspace = 'G:\llmdata'
+
+# Where the search index lives. Use the same value as LLMWIKI_INDEX_PATH in
+# claude_desktop_config.json. Empty means <workspace>\.llmwiki
+index_path = ''
+
+[web]
+# false runs only the API (the MCP server Claude uses does not need either).
+enabled = true
+# "dev" is what `llmwiki open` runs (hot reload, more memory).
+# "start" is the production server: run `npm run build` in web\ first, and again after each update.
+mode = "dev"
+
+[log]
+# Folder for llmwiki.log and its rotated copies. Set it for a service, e.g. the service
+# folder's logs\ subfolder. Empty means %LOCALAPPDATA%\LLMWiki\logs of the account running it.
+dir = ''
+# API and app messages at or above this level: "debug", "info", "warning" or "error".
+# "info" also shows the file watcher re-indexing pages.
+level = "warning"
+# One line per HTTP request. The web page polls every second, so this floods the log.
+access = false
+# Next.js output (compile messages, page requests). Turn on to debug a web problem.
+web = false
+# Rotate llmwiki.log at this size, keeping this many old copies.
+max_mb = 5
+backups = 3
+
+[startup]
+# Seconds before restarting a server that exited. Doubles (up to 5 min) while it keeps failing.
+restart_delay_seconds = 5
